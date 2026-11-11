@@ -212,6 +212,10 @@ inline std::vector<std::filesystem::path> FolderChildren(const std::filesystem::
 struct PatchRef {
     std::string name; // first line of the .sy1 ("" = empty slot)
     std::string file; // .sy1 path ("" = empty)
+    // The `.sy1`'s own `color=` line (Synth1 tags patches this way), so a
+    // colour travels with the file through copy / export / import and needs
+    // no sidecar. "default" = untinted.
+    std::string color = "default";
     // Categories / favourites / tags (PatchCategories.hpp), resolved during
     // the scan while the library has a TagStore. Kept off the .sy1: the
     // format is third party and is never extended.
@@ -249,17 +253,17 @@ inline bool ReadTextFile(const std::filesystem::path &path, std::string &out) {
     return true;
 }
 
-// Patch names (a .sy1's first line) by file: a rescan only opens new or
-// changed files (path + size + mtime), the rest comes from here. Thousands
-// of .sy1 = seconds of opens otherwise. Process-wide: every instance and
-// the background scans share it.
+// Patch names (a .sy1's first line) and colours (its second, `color=blue`)
+// by file: a rescan only opens new or changed files (path + size + mtime),
+// the rest comes from here. Thousands of .sy1 = seconds of opens otherwise.
+// Process-wide: every instance and the background scans share it.
 class PatchNameCache {
 public:
     static PatchNameCache &Shared() {
         static PatchNameCache cache;
         return cache;
     }
-    bool Name(std::filesystem::directory_entry e, std::string &name) {
+    bool Name(std::filesystem::directory_entry e, std::string &name, std::string &color) {
         std::error_code ec;
         e.refresh(ec); // one stat, then size + time come from the entry
         const std::uintmax_t size = e.file_size(ec);
@@ -272,16 +276,29 @@ public:
             const auto it = names_.find(key);
             if (it != names_.end() && it->second.size == size && it->second.time == time) {
                 name = it->second.name;
+                color = it->second.color;
                 return true;
             }
         }
         std::ifstream f(e.path(), std::ios::binary);
         if (!f) return false;
-        std::getline(f, name);
-        name = LegacyToUtf8(name.substr(0, name.find('\r')));
+        std::string line;
+        if (!std::getline(f, line)) return false;
+        name = LegacyToUtf8(line.substr(0, line.find('\r')));
+        color = "default";
+        if (std::getline(f, line)) { // `color=`; patches without one stay default
+            line = line.substr(0, line.find('\r'));
+            if (line.rfind("color=", 0) == 0) color = line.substr(6);
+        }
         std::lock_guard<std::mutex> lock(mutex_);
-        names_[key] = {size, time, name};
+        names_[key] = {size, time, name, color};
         return true;
+    }
+
+    // A rewritten file must not be served from cache by a stale stat.
+    void Forget(const std::string &path) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        names_.erase(path);
     }
 
 private:
@@ -289,6 +306,7 @@ private:
         std::uintmax_t size;
         std::filesystem::file_time_type time;
         std::string name;
+        std::string color;
     };
     std::mutex mutex_;
     std::unordered_map<std::string, Entry> names_;
@@ -461,7 +479,9 @@ public:
         if (!b.slots[slot].Empty() && std::filesystem::path(b.slots[slot].file) != target)
             std::filesystem::remove(b.slots[slot].file, ec);
         PatchHashCache::Shared().Forget(target.string()); // rewritten bytes
+        PatchNameCache::Shared().Forget(target.string());
         b.slots[slot] = MakeRef(patch.name, target);
+        b.slots[slot].color = patch.color;
         return true;
     }
 
@@ -547,8 +567,9 @@ private:
         std::vector<std::pair<std::string, PatchRef>> files;
         for (const auto &f : items) {
             const std::string fn = f.path().filename().string();
-            std::string patchName;
-            if (IsSy1(fn) && PatchNameCache::Shared().Name(f, patchName)) files.push_back({fn, MakeRef(patchName, f.path(), &f)});
+            std::string patchName, color;
+            if (IsSy1(fn) && PatchNameCache::Shared().Name(f, patchName, color))
+                files.push_back({fn, MakeRef(patchName, f.path(), &f, color)});
         }
         AssignSlots(bank, std::move(files));
         banks_.push_back(std::move(bank));
@@ -559,10 +580,11 @@ private:
     // A resolved reference: the stored category override beats the name rule,
     // derived categories work without any sidecar at all.
     PatchRef MakeRef(const std::string &patchName, const std::filesystem::path &file,
-                     const std::filesystem::directory_entry *entry = nullptr) const {
+                     const std::filesystem::directory_entry *entry = nullptr, std::string color = "default") const {
         PatchRef ref;
         ref.name = patchName;
         ref.file = file.string();
+        ref.color = std::move(color);
         const int derived = DeriveCategory(ref.name, file.filename().string());
         ref.category = derived;
         if (tags_ == nullptr) return ref;
@@ -1255,6 +1277,19 @@ public:
     // The tag chips: every tag in the library, sorted.
     std::vector<std::string> TagVocabulary() const { return tags_.Vocabulary(); }
 
+    // A patch's colour lives in its own .sy1 (`color=`), so this rewrites the
+    // file: the patch's hash changes, and Write carries its star / tags /
+    // category over to the new bytes (same path a re-save takes).
+    bool SetPatchColor(int bank, int slot, const std::string &color) {
+        EnsureScanned();
+        if (bank < 0 || slot < 0) return false;
+        Sy1Patch patch;
+        if (!Load(bank, slot, patch)) return false;
+        if (patch.color == color) return true; // nothing to rewrite
+        patch.color = color.empty() ? "default" : color;
+        return Write(bank, slot, patch);
+    }
+
     // "Tags…" > Export: the whole store (every patch of every library this
     // user tagged, not just this folder) as one file to keep somewhere safe.
     bool ExportTags(const std::filesystem::path &file) const { return tags_.SaveFile(file); }
@@ -1304,6 +1339,9 @@ public:
                 for (size_t t = 0; t < tags.size(); ++t) j += (t ? "," : "") + JsonString(tags[t]);
                 j += "]";
             }
+            j += "],\"colors\":[";
+            for (int s = 0; s < kBankSlots; ++s)
+                j += (s ? "," : "") + JsonString(banks[b].slots[size_t(s)].color);
             j += "]}";
         }
         return j + "]}";

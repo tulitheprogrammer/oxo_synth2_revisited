@@ -53,6 +53,13 @@ final class MockHost: SynthHost {
         func favsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
             "[" + (0..<128).map { $0 < patches.count && patches[$0].2 ? "true" : "false" }.joined(separator: ",") + "]"
         }
+        // a repeating palette so a render shows every tint at once
+        func colorsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
+            let palette = ["blue", "red", "yellow", "green", "magenta", "default", "default"]
+            return "[" + (0..<128).map { i in
+                i < patches.count ? "\"\(palette[i % palette.count])\"" : "\"default\""
+            }.joined(separator: ",") + "]"
+        }
         func tagsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
             "[" + (0..<128).map { i in
                 i < patches.count ? "[" + patches[i].3.map { "\"\($0)\"" }.joined(separator: ",") + "]" : "[]"
@@ -64,7 +71,7 @@ final class MockHost: SynthHost {
         out += banks.prefix(bankPrefix).map { bank in
             #"{"name":"\#(bank.name)","source":"\#(bank.source)","slots":"# + slots(bank.patches)
                 + #","cats":"# + catsJSON(bank.patches) + #","favs":"# + favsJSON(bank.patches)
-                + #","tags":"# + tagsJSON(bank.patches) + "}"
+                + #","tags":"# + tagsJSON(bank.patches) + #","colors":"# + colorsJSON(bank.patches) + "}"
         }.joined(separator: ",") + "]}"
         return out
     }
@@ -90,6 +97,7 @@ final class MockHost: SynthHost {
     func setPatchFavourite(bank: Int, slot: Int, on: Bool) {}
     func addPatchTag(bank: Int, slot: Int, tag: String) {}
     func removePatchTag(bank: Int, slot: Int, tag: String) {}
+    func setPatchColor(bank: Int, slot: Int, color: String) -> Bool { true }
     func exportTags(_ path: String) -> Bool { true }
     func importTags(_ path: String) -> Int { 0 }
     func tagVocabulary() -> String { "warm\nanalog\nbright\nchill" }

@@ -697,3 +697,63 @@ OXO_TEST(CopyPatchFillsFirstFreeSlot) {
     OXO_EXPECT_EQ(m.Library().Banks()[size_t(src)].slots[6].name, std::string("Lead"));
     fs::remove_all(base);
 }
+
+// The colour is the .sy1's own `color=` line (line 2), so it travels with
+// the file. SetPatchColor rewrites it; star / tags follow the new bytes.
+OXO_TEST(PatchColorReadsFromTheFileAndRoundTrips) {
+    const fs::path base = FreshDir("oxo_color");
+    const fs::path root = base / "lib", factory = base / "factory";
+    fs::create_directories(root / "Fav");
+    fs::create_directories(factory);
+    WriteFile(root / "Fav" / "001.sy1", "Green One\ncolor=green\nver=112\n0,2\n");
+    WriteFile(root / "Fav" / "002.sy1", "No Colour Line\nver=112\n0,2\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto bank = [&](const char *name) {
+        for (size_t b = 0; b < m.Library().Banks().size(); ++b)
+            if (m.Library().Banks()[b].name == name) return int(b);
+        return -1;
+    };
+    const int fav = bank("Fav");
+    OXO_EXPECT(fav >= 0);
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[0].color, std::string("green"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[1].color, std::string("default"));
+
+    m.SetFavourite(fav, 0, true);
+    m.AddPatchTag(fav, 0, "warm");
+    const int rev = m.Revision();
+    OXO_EXPECT(m.SetPatchColor(fav, 0, "red"));
+    OXO_EXPECT(m.Revision() > rev);
+    std::string text;
+    OXO_EXPECT(ReadTextFile(root / "Fav" / "001.sy1", text));
+    OXO_EXPECT(text.find("color=red") != std::string::npos);
+    OXO_EXPECT(text.find("color=green") == std::string::npos);
+    const auto &after = m.Library().Banks()[size_t(fav)].slots[0];
+    OXO_EXPECT_EQ(after.name, std::string("Green One"));
+    OXO_EXPECT_EQ(after.color, std::string("red"));
+    OXO_EXPECT(after.favourite); // sides marks follow the new bytes
+    OXO_EXPECT_EQ(after.tags.size(), size_t(1));
+    OXO_EXPECT(m.SetPatchColor(fav, 0, "default"));
+    OXO_EXPECT(ReadTextFile(root / "Fav" / "001.sy1", text));
+    OXO_EXPECT(text.find("color=default") != std::string::npos);
+
+    // a colour the file never carried can be set, and `Json` reports it
+    OXO_EXPECT(m.SetPatchColor(fav, 1, "magenta"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[1].color, std::string("magenta"));
+    OXO_EXPECT(m.Json().find("\"magenta\"") != std::string::npos);
+    OXO_EXPECT(!m.SetPatchColor(fav, 127, "red"));  // empty slot: no file
+    OXO_EXPECT(!m.SetPatchColor(-1, 0, "red"));
+    OXO_EXPECT(!m.SetPatchColor(fav, -1, "red"));
+
+    // the colour survives a fresh manager (it is in the file, no sidecar)
+    PatchManager m2;
+    m2.Configure(root, factory);
+    m2.Rescan();
+    for (size_t b = 0; b < m2.Library().Banks().size(); ++b)
+        if (m2.Library().Banks()[b].name == "Fav") {
+            OXO_EXPECT_EQ(m2.Library().Banks()[b].slots[0].color, std::string("default"));
+            OXO_EXPECT_EQ(m2.Library().Banks()[b].slots[1].color, std::string("magenta"));
+        }
+    fs::remove_all(base);
+}

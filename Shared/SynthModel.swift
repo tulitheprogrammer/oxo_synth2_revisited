@@ -64,6 +64,10 @@ public protocol SynthHost: AnyObject {
     func setPatchFavourite(bank: Int, slot: Int, on: Bool)
     func addPatchTag(bank: Int, slot: Int, tag: String)
     func removePatchTag(bank: Int, slot: Int, tag: String)
+    /// A patch's colour: the .sy1's own `color=` line, so it travels with
+    /// the file. Rewrites it; false = refused (factory bank) or failed.
+    @discardableResult
+    func setPatchColor(bank: Int, slot: Int, color: String) -> Bool
     /// The whole store as JSON -> `path`, true = written.
     func exportTags(_ path: String) -> Bool
     /// Merges a store file into ours (marks we already have win, so a new
@@ -113,9 +117,11 @@ struct PatchBankInfo: Decodable, Identifiable, Equatable {
     let favourites: [Bool]
     /// User tags per slot, already normalised / sorted by the engine.
     let tags: [[String]]
+    /// Per slot, the .sy1's own `color=` line ("default" = untinted).
+    let colors: [String]
     var id: String { source }
 
-    private enum CodingKeys: String, CodingKey { case name, source, slots, readOnly, cats, favs, tags }
+    private enum CodingKeys: String, CodingKey { case name, source, slots, readOnly, cats, favs, tags, colors }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
@@ -127,6 +133,7 @@ struct PatchBankInfo: Decodable, Identifiable, Equatable {
         categories = try c.decodeIfPresent([Int].self, forKey: .cats) ?? []
         favourites = (try c.decodeIfPresent([Bool].self, forKey: .favs) ?? [])
         tags = try c.decodeIfPresent([[String]].self, forKey: .tags) ?? []
+        colors = try c.decodeIfPresent([String].self, forKey: .colors) ?? []
     }
 
     var count: Int { slots.filter { !$0.isEmpty }.count }
@@ -134,6 +141,7 @@ struct PatchBankInfo: Decodable, Identifiable, Equatable {
     func category(_ slot: Int) -> Int { slot < categories.count ? categories[slot] : 0 }
     func isFavourite(_ slot: Int) -> Bool { slot < favourites.count && favourites[slot] }
     func tags(_ slot: Int) -> [String] { slot < tags.count ? tags[slot] : [] }
+    func color(_ slot: Int) -> String { slot < colors.count ? colors[slot] : "default" }
 }
 
 private struct LibraryInfo: Decodable {
@@ -930,6 +938,20 @@ final class SynthModel: ObservableObject {
 
     func removeTag(_ tag: String, bank: Int, slot: Int) {
         host.removePatchTag(bank: bank, slot: slot, tag: tag)
+        loadLibrary()
+    }
+
+    /// A slot's colour from the .sy1 itself ("default" = untinted).
+    func patchColor(bank: Int, slot: Int) -> String {
+        guard bank >= 0, bank < banks.count, slot >= 0, slot < banks[bank].slots.count else { return "default" }
+        return banks[bank].color(slot)
+    }
+
+    func setPatchColor(bank: Int, slot: Int, _ color: String) {
+        guard host.setPatchColor(bank: bank, slot: slot, color: color) else {
+            flash("could not colour this patch")
+            return
+        }
         loadLibrary()
     }
 

@@ -336,8 +336,8 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   (`libraryMenu`): mac right click = [Export bank…,] Show in Finder[,
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder
-  (mac only). A patch's own menu adds Add / Remove star and Edit tags…
-  on both.
+  (mac only). A patch's own menu adds Add / Remove star, Edit tags… and
+  Colour on both.
 - FILTER BAR (under the header, hidden while writing): free text (patch
   name, bank name, category name, tags), the 22 type chips ("All" first,
   Unclassified only once something is in it), the star-only chip, a "…"
@@ -406,6 +406,24 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
     `setPatchFavourite`, `addPatchTag` / `removePatchTag` (the patch's
     location = bank id + slot, like `copyPatch`), `exportTags` /
     `importTags` (int32 results) and `tagVocabulary` (one per line).
+- COLOURS (`PatchManager::SetPatchColor`, hook `setPatchColor`, tests
+  `PatchColorReadsFromTheFileAndRoundTrips`): Synth1's per-patch colour
+  lives in the patch's OWN `color=` line (line 2, next to `ver=`), so it is
+  not a sidecar record: it travels with the file through write / copy /
+  export / import and needs no hashing. `PatchRef::color` (default
+  "default") is filled by the scan (`PatchNameCache` now returns the name
+  and the colour in one read; `Write` forgets the path so a rewritten
+  colour reads back); `Json()` reports a `colors` array per bank beside
+  `tags`. `SetPatchColor` rewrites the file through `Write`, so star / tags
+  / category follow the new bytes exactly like a re-save; the factory bank
+  refuses. The browser's patch menu offers "Colour" (mac right click, iPad
+  long press; not on the factory bank) over the six names real libraries
+  use - `default` + blue / red / yellow / green / magenta - and the slot
+  cell tints: a 28 % fill + 1 pt border (`PatchColorEdit.tint`), the
+  selected cell keeping its inverted look, `default` and unknown values
+  plain. Recolouring the LOADED slot also updates the instance's
+  `patchColor_` (`SynthEditorCore::PatchColorEdited`), so a later
+  controller-side save writes the new colour.
 - EXPORT BANK (`PatchManager::ExportBank`, hook `exportBank`, FileAction
   `.exportBank(id)`): pick a target folder (mac NSOpenPanel folders only,
   iPad picker on `[.folder]`); a folder named after the bank's (" 2" when

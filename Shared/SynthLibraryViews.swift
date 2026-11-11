@@ -535,6 +535,9 @@ struct PatchBrowserView: View {
         let filtered = model.hasActiveFilter && !patch.isEmpty && !model.slotMatches(bank: b, slot: s)
             && !(b == model.loadedBank && s == model.currentProgram)
         let text = String(format: "%03d:", s + 1) + patch
+        // Colour lives in the .sy1 itself: a tint on the cell, not a badge
+        // (an 11 pt monospaced name has no spare width).
+        let tint = patch.isEmpty ? nil : PatchColorEdit.tint(info.color(s))
         return HStack(spacing: 2) {
             if let mark, mark.favourite {
                 Image(systemName: "star.fill").font(.system(size: 7, weight: .bold))
@@ -549,8 +552,10 @@ struct PatchBrowserView: View {
         }
             .padding(.horizontal, 5).padding(.vertical, 3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 2).fill(selected ? theme.displayText : theme.display))
-            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(theme.displayText, lineWidth: dropTarget == s ? 1.5 : 0))
+            .background(RoundedRectangle(cornerRadius: 2).fill(selected ? theme.displayText : theme.display)
+                .overlay(RoundedRectangle(cornerRadius: 2).fill((tint ?? .clear).opacity(0.28))))
+            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(dropTarget == s ? theme.displayText : (tint ?? .clear),
+                                                                  lineWidth: dropTarget == s ? 1.5 : (tint == nil ? 0 : 1)))
             .opacity(filtered ? 0.3 : 1)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -568,7 +573,8 @@ struct PatchBrowserView: View {
             }
             .libraryMenu(enabled: !patch.isEmpty, delete: readOnly ? nil : { model.deleteSlot(bank: b, slot: s) },
                          patch: mark, star: { model.toggleFavourite(bank: b, slot: s) },
-                         tags: { model.tagEdit = (b, s) }) {
+                         tags: { model.tagEdit = (b, s) },
+                         color: readOnly ? nil : PatchColorEdit(current: info.color(s)) { model.setPatchColor(bank: b, slot: s, $0) }) {
                 model.host.slotPath(bank: b, slot: s)
             }
             // drag a patch onto another slot: move there (swap if taken); onto
@@ -708,6 +714,7 @@ extension View {
     func libraryMenu(enabled: Bool = true, export: (() -> Void)? = nil, deleteTitle: String = "Delete",
                      delete: (() -> Void)?, patch: (category: Int, favourite: Bool, tags: [String])? = nil,
                      star: (() -> Void)? = nil, tags: (() -> Void)? = nil,
+                     color: PatchColorEdit? = nil,
                      _ path: @escaping () -> String) -> some View {
         #if os(macOS)
         if enabled {
@@ -715,6 +722,7 @@ extension View {
                 if let patch, let star, let tags {
                     Button(patch.favourite ? "Remove star" : "Add star") { star() }
                     Button("Edit tags…") { tags() }
+                    if let color { color.menu }
                     Divider()
                 }
                 if let export { Button("Export bank…") { export() } }
@@ -733,6 +741,7 @@ extension View {
                 if let patch, let star, let tags {
                     Button(patch.favourite ? "Remove star" : "Add star", systemImage: "star") { star() }
                     Button("Edit tags…", systemImage: "tag") { tags() }
+                    if let color { color.menu }
                     Divider()
                 }
                 if let export { Button("Export bank…", systemImage: "square.and.arrow.up") { export() } }

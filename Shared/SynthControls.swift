@@ -589,3 +589,42 @@ struct SectionBox<Content: View>: View {
         .overlay(Rectangle().strokeBorder(theme.edge, lineWidth: 1))
     }
 }
+
+/// A patch's colour, which Synth1 stores in the .sy1 itself (`color=`), so
+/// it travels with the file through copy / export / import. The menu of the
+/// browser's patch context menu.
+struct PatchColorEdit {
+    let current: String
+    let set: (String) -> Void
+
+    /// The names real Synth1 / Synth2 libraries use. Anything else (an old
+    /// or foreign value) reads as untinted and stays untouched.
+    static let names = ["default", "blue", "red", "yellow", "green", "magenta"]
+
+    /// nil = "default" and unknown values: the cell stays as it is.
+    static func tint(_ name: String) -> Color? {
+        switch name {
+        case "blue": return Color(red: 0.29, green: 0.55, blue: 1.00)
+        case "red": return Color(red: 1.00, green: 0.33, blue: 0.33)
+        case "yellow": return Color(red: 0.96, green: 0.80, blue: 0.20)
+        case "green": return Color(red: 0.28, green: 0.85, blue: 0.44)
+        case "magenta": return Color(red: 0.96, green: 0.38, blue: 0.96)
+        default: return nil
+        }
+    }
+
+    static func displayName(_ name: String) -> String {
+        name.isEmpty ? "Default" : name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// A submenu with the current one ticked (a Picker: that is what draws
+    /// the tick on both platforms; a Toggle would draw a switch on iPad).
+    var menu: some View {
+        Menu("Colour: " + Self.displayName(current)) {
+            Picker("", selection: Binding(get: { current }, set: { set($0) })) {
+                ForEach(Self.names, id: \.self) { Text(Self.displayName($0)).tag($0) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        }
+    }
+}

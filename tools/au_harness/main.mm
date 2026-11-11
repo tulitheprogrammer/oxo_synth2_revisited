@@ -101,6 +101,13 @@ int main() {
         expect(pb == 0 && ps == 0 && std::strcmp(h3.patchName(h3.ctx), "Written") == 0, "session restores the program");
         Synth2Destroy(third);
     }
+    {   // recolouring the LOADED patch: a save of the current patch follows
+        std::system("rm -f /tmp/oxo_s2_harness_colour.sy1");
+        expect(h2.setPatchColor(h2.ctx, 0, 0, "blue") == 1, "colour the loaded patch");
+        expect(h2.savePatchFile(h2.ctx, "/tmp/oxo_s2_harness_colour.sy1") == 1, "save after recolour");
+        expect(std::system("grep -qx 'color=blue' /tmp/oxo_s2_harness_colour.sy1") == 0, "saved patch keeps the new colour");
+        std::system("rm -f /tmp/oxo_s2_harness_colour.sy1");
+    }
     expect(std::strstr(h.slotPath(h.ctx, 0, 0), "001.sy1") != nullptr && *h.slotPath(h.ctx, 0, 1) == 0, "slot path");
     // import: a written patch file comes back as the "Imported" bank, and
     // the payload reports the count (the UI's "imported 1 patch into ...")
@@ -153,6 +160,17 @@ int main() {
     // drag onto a bank = copy into its first free slot (bank 0 = "Finder Bank", 001 taken)
     expect(h.copyPatch(h.ctx, 0, 0, 0) == 1 &&
                std::system("test -f '/tmp/oxo_s2_ios_harness_lib/Finder Bank/002.sy1'") == 0, "copy patch");
+    // patch colour: written into the .sy1's own `color=` line, and read back
+    // by the next scan (so it needs no sidecar and travels with the file)
+    {
+        const char *before = h.libraryJSON(h.ctx);
+        expect(std::strstr(before, "\"colors\":") != nullptr, "library reports slot colours");
+        expect(h.setPatchColor(h.ctx, 0, 0, "red") == 1, "set patch colour");
+        expect(std::strstr(h.libraryJSON(h.ctx), "\"red\"") != nullptr, "colour read back");
+        h.rescanLibrary(h.ctx);
+        expect(std::strstr(h.libraryJSON(h.ctx), "\"red\"") != nullptr, "colour survives a rescan");
+        expect(h.setPatchColor(h.ctx, -1, 0, "red") == 0, "colour of a missing bank refused");
+    }
     // Initialize patch = Synth2's INIT; the double-click default follows it
     int32_t lo = 0, hi = 0, def = 0;
     h.paramInfo(h.ctx, 33, &lo, &hi, &def);

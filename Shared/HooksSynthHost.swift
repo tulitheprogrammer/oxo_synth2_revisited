@@ -64,6 +64,9 @@ final class HooksSynthHost: SynthHost {
     func removePatchTag(bank: Int, slot: Int, tag: String) {
         tag.withCString { h.removePatchTag?(h.ctx, Int32(bank), Int32(slot), $0) }
     }
+    func setPatchColor(bank: Int, slot: Int, color: String) -> Bool {
+        color.withCString { (h.setPatchColor?(h.ctx, Int32(bank), Int32(slot), $0) ?? 0) != 0 }
+    }
     func exportTags(_ path: String) -> Bool { (h.exportTags?(h.ctx, path) ?? 0) != 0 }
     func importTags(_ path: String) -> Int { Int(h.importTags?(h.ctx, path) ?? -1) }
     func tagVocabulary() -> String { str(h.tagVocabulary?(h.ctx)) }

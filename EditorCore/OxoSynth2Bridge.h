@@ -65,6 +65,10 @@ typedef struct OxoSynth2Hooks {
     void (*setPatchFavourite)(void *ctx, int32_t bank, int32_t slot, int32_t on);
     void (*addPatchTag)(void *ctx, int32_t bank, int32_t slot, const char *tag);
     void (*removePatchTag)(void *ctx, int32_t bank, int32_t slot, const char *tag);
+    // A patch's colour, from the .sy1's own `color=` line ("default" =
+    // untinted). Rewrites the file; its star / tags / category follow the
+    // new bytes. false = refused (factory bank) or failed.
+    int32_t (*setPatchColor)(void *ctx, int32_t bank, int32_t slot, const char *color);
     // The whole store as JSON text -> written to `path`, false = failed.
     int32_t (*exportTags)(void *ctx, const char *path);
     // Merges a store into ours (records we already have win) and rescans;
