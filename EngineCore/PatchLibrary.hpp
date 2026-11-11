@@ -1290,6 +1290,50 @@ public:
         return Write(bank, slot, patch);
     }
 
+    // Patches whose BYTES are identical, everywhere in the library: an
+    // import that brought the same module twice, a bank copied back in,
+    // a save that took another patch's bytes. Synth1 slots hold no
+    // identity, so the file's SHA-256 is the only truth. Payload: a
+    // "groups=N" line, then one line per group, "bank,slot" tokens
+    // space separated (names / colours come from Json, so a group
+    // carries only where its members ARE). "" = library still loading.
+    // Nothing is connected to the scan worker: it hashes the whole
+    // library (~0.2 s once on 19,200 patches, then cached), so a
+    // second call is instant.
+    std::string FindDuplicates() {
+        EnsureScanned();
+        if (Scanning()) return {};
+        std::unordered_map<std::string, std::vector<int>> byHash;
+        const auto &banks = lib_.Banks();
+        for (size_t b = 0; b < banks.size(); ++b) {
+            for (size_t s = 0; s < size_t(kBankSlots); ++s) {
+                const PatchRef &ref = banks[b].slots[s];
+                if (ref.Empty()) continue;
+                std::string hash = ref.hash;
+                if (hash.empty()) {
+                    std::error_code ec;
+                    const std::filesystem::directory_entry entry(std::filesystem::path(ref.file), ec);
+                    if (ec || !PatchHashCache::Shared().Hash(entry, hash)) continue;
+                }
+                byHash[hash].push_back(int(b));
+                byHash[hash].push_back(int(s));
+            }
+        }
+        std::vector<std::vector<int>> groups;
+        for (auto &pair : byHash)
+            if (pair.second.size() >= 4) groups.push_back(std::move(pair.second));
+        std::sort(groups.begin(), groups.end());
+        std::string out = "groups=" + std::to_string(groups.size()) + "\n";
+        for (const std::vector<int> &group : groups) {
+            for (size_t i = 0; i + 1 < group.size(); i += 2) {
+                if (i != 0) out += ' ';
+                out += std::to_string(group[i]) + "," + std::to_string(group[i + 1]);
+            }
+            out += '\n';
+        }
+        return out;
+    }
+
     // "Tags…" > Export: the whole store (every patch of every library this
     // user tagged, not just this folder) as one file to keep somewhere safe.
     bool ExportTags(const std::filesystem::path &file) const { return tags_.SaveFile(file); }

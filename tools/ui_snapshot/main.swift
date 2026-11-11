@@ -101,6 +101,9 @@ final class MockHost: SynthHost {
     func exportTags(_ path: String) -> Bool { true }
     func importTags(_ path: String) -> Int { 0 }
     func tagVocabulary() -> String { "warm\nanalog\nbright\nchill" }
+    func findDuplicates() -> String {
+        "groups=2\n0,1 1,0\n2,2 2,3 0,0\n"
+    }
     func name(_ id: Int) -> String { "param \(id)" }
     func displayName(_ id: Int) -> String { name(id) }
     var learned: [Int: Int] = [19: 74, 20: 71]
@@ -163,6 +166,8 @@ if args.count > 2 {
         if args[2] == "filter" { model.categoryFilter = 4 }
         // the tag dialog for the loaded patch
         if args[2] == "tags" { model.tagEdit = (1, 1) }
+        // duplicate sets, from the mock host's payload
+        if args[2] == "duplicates" { model.findDuplicates() }
     }
 }
 let width = 1155.0

@@ -225,6 +225,9 @@ struct PatchBrowserView: View {
             // open one), and on iPad it keeps clear of the keyboard
             if let edit = model.tagEdit { TagDialog(model: model, bank: edit.bank, slot: edit.slot) }
         }
+        .overlay {
+            if let groups = model.duplicateGroups { DuplicatesDialog(model: model, groups: groups) }
+        }
         .shadow(color: .black.opacity(0.4), radius: 6)
         .onAppear {
             name = model.patchName
@@ -398,6 +401,8 @@ struct PatchBrowserView: View {
         Menu {
             Button("Export categories and tags…") { model.fileAction = .exportTags }
             Button("Import categories and tags…") { model.fileAction = .importTags }
+            Divider()
+            Button("Find duplicates…") { model.findDuplicates() }
             Divider()
             Button("Clear filter") { model.clearLibraryFilter() }
                 .disabled(!model.hasActiveFilter)
@@ -802,6 +807,130 @@ struct DeleteBankDialog: View {
         Button(action: action) {
             Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
                 .padding(.horizontal, 12).frame(minWidth: 64).frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 3).fill(fill))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Browser > ⋯ > Find duplicates…: patches whose FILES are byte for byte
+/// the same, grouped. Nothing is deleted automatically - each copy gets a
+/// Load / Delete of its own, and deleting refreshes the groups, so a set
+/// that loses all but one member disappears. Drawn inside the browser like
+/// DeleteBankDialog (the host owns the window; AUv3 can't open one).
+struct DuplicatesDialog: View {
+    @ObservedObject var model: SynthModel
+    let groups: [DuplicateGroup]
+
+    private var copies: Int { groups.reduce(0) { $0 + $1.members.count } }
+
+    /// Tall enough for the sets reported, no taller than 260 pt (then it
+    /// scrolls). Rows are 20 pt + 3 pt spacing, a set's title 14 pt, sets
+    /// sit 10 pt apart - close enough to let a small result stay small.
+    private var listHeight: CGFloat {
+        let content = groups.reduce(CGFloat(0)) { $0 + 14 + CGFloat($1.members.count) * 23 } +
+            CGFloat(max(0, groups.count - 1)) * 10 + 20
+        return min(260, max(40, content))
+    }
+
+    private var deleteHint: String {
+        #if os(macOS)
+        return "Delete moves a copy to the Trash."
+        #else
+        return "Delete removes a copy for good."
+        #endif
+    }
+
+    private func bankName(_ bank: Int) -> String { bank < model.banks.count ? model.banks[bank].name : "?" }
+    private func patchName(_ member: DuplicateGroup.Member) -> String {
+        guard member.bank < model.banks.count,
+              member.slot < model.banks[member.bank].slots.count else { return "" }
+        return model.banks[member.bank].slots[member.slot]
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture { model.duplicateGroups = nil }
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Text("Duplicate patches").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
+                    Spacer(minLength: 4)
+                    if !groups.isEmpty {
+                        Text("\(copies) copies in \(groups.count) set\(groups.count == 1 ? "" : "s")")
+                            .font(.system(size: 10)).foregroundColor(Dlg.dim)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity).frame(height: 22).background(Dlg.bar)
+                if groups.isEmpty {
+                    Text("No two patches share their file bytes.")
+                        .font(.system(size: 11)).foregroundColor(Dlg.text)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                } else {
+                    ScrollView(showsIndicators: true) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(groups.enumerated()), id: \.offset) { index, group in
+                                groupBlock(index: index, group: group)
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .frame(height: listHeight)
+                }
+                HStack(spacing: 8) {
+                    Text(deleteHint)
+                        .font(.system(size: 10)).foregroundColor(Dlg.dim)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    button("Close", fill: Dlg.bar) { model.duplicateGroups = nil }
+                }
+                .padding(10)
+            }
+            .frame(width: 400)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Dlg.bg))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
+            #if os(macOS)
+            .background(WheelShield())
+            #endif
+        }
+    }
+
+    private func groupBlock(index: Int, group: DuplicateGroup) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Set \(index + 1) · \(group.members.count) identical files")
+                .font(.system(size: 10, weight: .semibold)).foregroundColor(Dlg.dim)
+            ForEach(group.members, id: \.self) { member in
+                HStack(spacing: 6) {
+                    Text(String(format: "%03d", member.slot + 1))
+                        .font(.system(size: 10, design: .monospaced)).foregroundColor(Dlg.dim)
+                        .frame(width: 24, alignment: .leading)
+                    Text(patchName(member)).font(.system(size: 11)).foregroundColor(Dlg.text)
+                        .lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(bankName(member.bank)).font(.system(size: 10)).foregroundColor(Dlg.dim)
+                        .lineLimit(1).truncationMode(.head).frame(maxWidth: 110, alignment: .trailing)
+                    button("Load", fill: Dlg.field, width: 44) {
+                        model.duplicateGroups = nil
+                        model.load(bank: member.bank, slot: member.slot)
+                    }
+                    button("Delete", fill: Dlg.field, width: 52) {
+                        model.deleteDuplicate(bank: member.bank, slot: member.slot)
+                    }
+                }
+                .padding(.horizontal, 6).frame(height: 20)
+                .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field.opacity(0.6)))
+            }
+        }
+    }
+
+    private func button(_ title: String, fill: Color, width: CGFloat = 64,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
+                .padding(.horizontal, 10).frame(minWidth: width).frame(height: 20)
                 .background(RoundedRectangle(cornerRadius: 3).fill(fill))
                 .contentShape(Rectangle())
         }

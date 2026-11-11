@@ -70,6 +70,7 @@ final class HooksSynthHost: SynthHost {
     func exportTags(_ path: String) -> Bool { (h.exportTags?(h.ctx, path) ?? 0) != 0 }
     func importTags(_ path: String) -> Int { Int(h.importTags?(h.ctx, path) ?? -1) }
     func tagVocabulary() -> String { str(h.tagVocabulary?(h.ctx)) }
+    func findDuplicates() -> String { str(h.findDuplicates?(h.ctx)) }
     func midiCC(_ id: Int) -> Int { Int(h.midiCC(h.ctx, Int32(id))) }
     func setMidiCC(_ id: Int, _ cc: Int) { h.setMidiCC(h.ctx, Int32(id), Int32(cc)) }
     var lastCC: Int { Int(h.lastCC(h.ctx)) }

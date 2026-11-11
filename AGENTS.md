@@ -341,12 +341,12 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 - FILTER BAR (under the header, hidden while writing): free text (patch
   name, bank name, category name, tags), the 22 type chips ("All" first,
   Unclassified only once something is in it), the star-only chip, a "…"
-  menu (export / import categories and tags, clear filter) and Clear. It
-  narrows SLOTS in every bank at once: a non-matching slot stays in place
-  (drag / copy still land) but fades to 0.3, the loaded patch stays
-  legible, and a bank shows "matching / total" and dims when nothing
-  matches but stays selectable (copy workflows). Client-side in Swift, so
-  no EngineCore work and no rescan.
+  menu (export / import categories and tags, find duplicates, clear filter)
+  and Clear. It narrows SLOTS in every bank at once: a non-matching slot
+  stays in place (drag / copy still land) but fades to 0.3, the loaded
+  patch stays legible, and a bank shows "matching / total" and dims when
+  nothing matches but stays selectable (copy workflows). Client-side in
+  Swift, so no EngineCore work and no rescan.
 - TagDialog (`Edit tags…`, drawn in the browser like DeleteBankDialog):
   the add field at the TOP (clear of the iPad keyboard), suggestions from
   the tags already in use (`.prefix(32)`), the tag list with remove
@@ -424,6 +424,19 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   plain. Recolouring the LOADED slot also updates the instance's
   `patchColor_` (`SynthEditorCore::PatchColorEdited`), so a later
   controller-side save writes the new colour.
+- DUPLICATES (`PatchManager::FindDuplicates`, hook `findDuplicates`,
+  test `FindDuplicatesGroupsIdenticalBytes`): the filter bar's "..." menu >
+  "Find duplicates..." opens `DuplicatesDialog` listing every set of patches
+  whose FILE BYTES are identical (same hash as the tag sidecar, so two
+  re-saves of one sound with the same values group, a name or colour change
+  does not). Payload = `groups=N` then one line per set of `"bank,slot"`
+  tokens (positions only: names and colours come from the bank list, so a
+  set survives a rescan and needs no escaping). Runs only on a FINISHED
+  scan (a streamed prefix would split a set across the arrival boundary =
+  "still loading the library"); an untagged library hashes on demand
+  through the process-wide `PatchHashCache` (~0.2 s cold on 19,200
+  patches, instant after). Each row loads or deletes ONE copy; nothing is
+  ever deleted automatically.
 - EXPORT BANK (`PatchManager::ExportBank`, hook `exportBank`, FileAction
   `.exportBank(id)`): pick a target folder (mac NSOpenPanel folders only,
   iPad picker on `[.folder]`); a folder named after the bank's (" 2" when

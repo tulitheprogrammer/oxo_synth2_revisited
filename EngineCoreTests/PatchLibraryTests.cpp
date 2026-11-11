@@ -757,3 +757,43 @@ OXO_TEST(PatchColorReadsFromTheFileAndRoundTrips) {
         }
     fs::remove_all(base);
 }
+
+// Find duplicates by FILE BYTES: a patch imported twice, or a bank copied
+// back in, is the same file under a different name - Synth1 slots hold no
+// identity. Nothing is deleted: the payload only says where the copies are.
+OXO_TEST(FindDuplicatesGroupsIdenticalBytes) {
+    const fs::path base = FreshDir("oxo_dupes");
+    const fs::path root = base / "lib", factory = base / "factory";
+    fs::create_directories(root / "One");
+    fs::create_directories(root / "Two");
+    fs::create_directories(factory);
+    const std::string shared = "Shared Sound\ncolor=blue\nver=112\n0,2\n";
+    WriteFile(root / "One" / "001.sy1", shared);
+    WriteFile(root / "Two" / "003.sy1", shared);            // same bytes, other slot / bank
+    WriteFile(root / "Two" / "001.sy1", "Shared Sound\ncolor=blue\nver=112\n0,3\n"); // 1 byte off
+    WriteFile(root / "One" / "005.sy1", "Solo\nver=112\n0,2\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto bank = [&](const char *name) {
+        for (size_t b = 0; b < m.Library().Banks().size(); ++b)
+            if (m.Library().Banks()[b].name == name) return int(b);
+        return -1;
+    };
+    const int one = bank("One"), two = bank("Two");
+    OXO_EXPECT(one >= 0);
+    OXO_EXPECT(two >= 0);
+
+    const std::string payload = m.FindDuplicates();
+    OXO_EXPECT(payload.rfind("groups=1\n", 0) == 0);
+    const std::string pair = std::to_string(one) + ",0 " + std::to_string(two) + ",2";
+    OXO_EXPECT(payload.find(pair) != std::string::npos);
+    OXO_EXPECT(payload.find(std::to_string(two) + ",0") == std::string::npos); // differs
+    OXO_EXPECT(payload.find(std::to_string(one) + ",4") == std::string::npos); // unique
+
+    // Deleting one copy leaves nothing to report.
+    OXO_EXPECT(m.DeleteBank(one)); // the manager's own bank delete
+    m.Rescan();
+    OXO_EXPECT(m.FindDuplicates().rfind("groups=0\n", 0) == 0);
+    fs::remove_all(base);
+}

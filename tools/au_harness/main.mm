@@ -160,6 +160,9 @@ int main() {
     // drag onto a bank = copy into its first free slot (bank 0 = "Finder Bank", 001 taken)
     expect(h.copyPatch(h.ctx, 0, 0, 0) == 1 &&
                std::system("test -f '/tmp/oxo_s2_ios_harness_lib/Finder Bank/002.sy1'") == 0, "copy patch");
+    // duplicate detection: the copy made above is byte-identical to its source
+    // the imported copy in bank 1 is the same bytes too, so all three group
+    expect(std::strcmp(h.findDuplicates(h.ctx), "groups=1\n0,0 0,1 1,0\n") == 0, "find duplicates");
     // patch colour: written into the .sy1's own `color=` line, and read back
     // by the next scan (so it needs no sidecar and travels with the file)
     {

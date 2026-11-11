@@ -76,6 +76,12 @@ typedef struct OxoSynth2Hooks {
     int32_t (*importTags)(void *ctx, const char *path);
     // The tags in use, one per line ("" = none yet).
     const char *(*tagVocabulary)(void *ctx);
+
+    // Patches with identical file bytes, as "groups=N" + one line per
+    // group of "bank,slot" tokens (PatchManager::FindDuplicates).
+    // "" = library still loading; nothing is deleted, the browser
+    // offers the choice.
+    const char *(*findDuplicates)(void *ctx);
     // MIDI learn (plugin-global table, persisted by the wrapper).
     int32_t (*midiCC)(void *ctx, int32_t id);                  // 0 = not learned
     void (*setMidiCC)(void *ctx, int32_t id, int32_t cc);      // 0 = unlearn

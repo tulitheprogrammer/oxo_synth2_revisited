@@ -75,6 +75,10 @@ public protocol SynthHost: AnyObject {
     func importTags(_ path: String) -> Int
     /// Tags in use, one per line, "" = none yet.
     func tagVocabulary() -> String
+    /// Patches whose file bytes are identical, across every bank:
+    /// "groups=N" then one line per group of "bank,slot" tokens.
+    /// "" = the library is still loading.
+    func findDuplicates() -> String
     /// MIDI learn: plugin-global table (0 = not learned) and the latest
     /// "a CC arrived" token ((counter << 7) | cc, 0 = none yet).
     func midiCC(_ id: Int) -> Int
@@ -211,6 +215,46 @@ public struct ImportOutcome: Equatable {
     }
 }
 
+/// One set of patches whose file BYTES are identical
+/// (`PatchManager::FindDuplicates`): only where each member sits, since
+/// names and colours come from the bank list, so a group stays valid
+/// across a rescan.
+public struct DuplicateGroup: Equatable, Identifiable {
+    public struct Member: Equatable, Hashable {
+        public let bank: Int
+        public let slot: Int
+    }
+
+    public var members: [Member]
+
+    public var id: String {
+        members.map { "\($0.bank),\($0.slot)" }.joined(separator: " ")
+    }
+
+    /// Decodes "groups=N" + one line of "bank,slot" tokens per group. A
+    /// malformed token drops its whole group rather than half of one.
+    public static func groups(payload: String) -> [DuplicateGroup] {
+        var out: [DuplicateGroup] = []
+        for line in payload.split(separator: "\n", omittingEmptySubsequences: true) {
+            if line.hasPrefix("groups=") { continue }
+            let tokens = line.split(whereSeparator: { $0 == " " || $0 == "," })
+            guard tokens.count >= 4, tokens.count % 2 == 0 else { continue }
+            var members: [Member] = []
+            var malformed = false
+            for i in stride(from: 0, to: tokens.count, by: 2) {
+                guard let bank = Int(tokens[i]), let slot = Int(tokens[i + 1]),
+                      bank >= 0, slot >= 0 else {
+                    malformed = true
+                    break
+                }
+                members.append(Member(bank: bank, slot: slot))
+            }
+            if !malformed { out.append(DuplicateGroup(members: members)) }
+        }
+        return out
+    }
+}
+
 /// Editor state mirrored from the host by a 30 Hz poll (host automation,
 /// session restore and patch loads all show up without extra plumbing).
 final class SynthModel: ObservableObject {
@@ -315,6 +359,9 @@ final class SynthModel: ObservableObject {
     /// Browser > Edit tags…: the slot whose category / star / tags the
     /// in-browser dialog edits, nil = none.
     @Published var tagEdit: (bank: Int, slot: Int)?
+    /// Browser > Find duplicates…: the groups reported, nil = dialog
+    /// closed. `[]` = the dialog is open showing "none found".
+    @Published var duplicateGroups: [DuplicateGroup]?
     @Published var fileAction: FileAction?
     /// The in-panel Themes dialog (menu > Themes…).
     @Published var showThemes = false
@@ -624,6 +671,7 @@ final class SynthModel: ObservableObject {
         writing = false
         bankToDelete = nil
         tagEdit = nil
+        duplicateGroups = nil
     }
 
     /// LCD / browser selection from the host's program (a fresh instance
@@ -697,6 +745,34 @@ final class SynthModel: ObservableObject {
         load(bank: pick.bank, slot: pick.slot)
     }
 
+    /// Browser > Find duplicates…: every set of patches whose file bytes
+    /// match, across all banks (`PatchManager::FindDuplicates`). A library
+    /// still being scanned answers "" - nothing to report yet, so the scan
+    /// hint is shown instead (a partial list would split a group).
+    func findDuplicates() {
+        guard let groups = scanDuplicates() else {
+            flash("still loading the library")
+            return
+        }
+        duplicateGroups = groups
+        if groups.isEmpty { flash("no duplicate patches") }
+    }
+
+    /// nil = the host still has work to do (returns "" until the scan ends).
+    private func scanDuplicates() -> [DuplicateGroup]? {
+        let payload = host.findDuplicates()
+        guard !payload.isEmpty else { return nil }
+        return DuplicateGroup.groups(payload: payload)
+    }
+
+    /// Duplicates dialog > one copy's Delete: the slot's own Delete, then
+    /// the groups are worked out again (a set that lost all but one member
+    /// leaves the list). The readout keeps the "moved to Trash" message.
+    func deleteDuplicate(bank: Int, slot: Int) {
+        deleteSlot(bank: bank, slot: slot)
+        if let groups = scanDuplicates() { duplicateGroups = groups }
+    }
+
     /// Rows of the browser's 4-column slot grid (filled top to bottom).
     static func browserRows(_ count: Int) -> Int { (count + 3) / 4 }
 
@@ -724,6 +800,10 @@ final class SynthModel: ObservableObject {
         }
         if tagEdit != nil { // Esc closes it; its text field keeps the rest
             if key == .escape { tagEdit = nil }
+            return true
+        }
+        if duplicateGroups != nil { // results stay put until asked to close
+            if key == .escape { duplicateGroups = nil }
             return true
         }
         if key == .escape {

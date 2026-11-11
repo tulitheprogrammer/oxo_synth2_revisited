@@ -256,6 +256,7 @@ public:
             for (const std::string &tag : C(c)->library_.TagVocabulary()) text += tag + '\n';
             return C(c)->Keep(std::move(text));
         };
+        h.findDuplicates = [](void *c) { return C(c)->Keep(C(c)->library_.FindDuplicates()); };
         h.midiCC = [](void *c, int32_t id) { return C(c)->MidiCC(id); };
         h.setMidiCC = [](void *c, int32_t id, int32_t cc) { C(c)->SetMidiCC(id, cc); };
         h.lastCC = [](void *c) { return C(c)->LastCC(); };
