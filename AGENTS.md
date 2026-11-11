@@ -285,13 +285,22 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   (`Trash.hpp`; iOS → deleted); LCD shows (10 s) "X.zip
   imported and moved to Trash" (`TakeNotice` → hook `libraryNotice`). A zip
   without .sy1 stays, ignored.
-- IMPORT (`ImportItems`, hook `importItems`, the browser's Import…):
-  COPIES into the root. Folders copied
+- IMPORT (`ImportItems`, hook `importItems`, the browser's "Import
+  folder…" / "Import files…"): COPIES into the root. Folders copied
   (only .sy1), zips EXTRACTED into a folder of their name (one wrapping
   folder dropped, __MACOSX / dot files skipped, non-UTF-8 names cleaned),
   a Synth1 `zipbank/` folder merges into its parent, loose .sy1 →
   "Imported" bank's next free slots; never clobbers ("Bank 2"). No export
   (Finder). Sessions store the patch, never a bank ref.
+  TWO PICKERS on both platforms: folders only (`canChooseFiles = false`,
+  `[.folder]`) and files only (`[.zip, .sy1]`). One mixed panel made
+  macOS open a picked folder's contents instead of picking it.
+  THE RESULT IS REPORTED: `ImportResult` (folders with their patch counts,
+  the refusals and why) → a newline payload `patches=N`, `+<count>
+  <folder>`, `!<path>: <reason>` → `ImportOutcome` in Swift → a 5 s notice
+  in the BROWSER HEADER ("imported 3 patches into Imported (1 skipped)")
+  and the LCD. An active filter is cleared on success, else the new
+  patches would be invisible. A silent no-op looked like a broken import.
 - WRITE (Synth1): dialog = banks + 128-slot grid + name field + "New
   bank…" (the only in-app way to make one); writes `NNN.sy1` (replaces a
   differently named file that held the slot), "Overwrite NNN" when
@@ -315,10 +324,12 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   own bank: only its .sy1 files. Never the factory bank, never outside the
   root; the loaded program is forgotten if its bank goes (the sound plays
   on). Bank delete asks first (in-browser `DeleteBankDialog`, Esc cancels).
-- Browser header: Import… / Open library folder / Refresh / Close (mac);
-  iPad: Import folder… (picker on `[.folder]` ALONE: mixed with file types
-  iOS navigates into folders, no Open button) / Import files… (zip / .sy1,
-  multiple) / Refresh / Close. Rescans on every open. Bank / slot menu
+- Browser header, BOTH platforms: Import folder… (`[.folder]` ALONE: mixed
+  with file types the picker navigates into folders - on iOS there is then
+  no Open button, on macOS a folder package opens) / Import files… (zip /
+  .sy1, multiple) / Library (mac: the library folder in the Finder) /
+  Refresh / Close, plus the last import's notice for 5 s. Rescans on every
+  open. Bank / slot menu
   (`libraryMenu`): mac right click = [Export bank…,] Show in Finder[,
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder

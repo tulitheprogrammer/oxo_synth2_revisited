@@ -82,7 +82,7 @@ final class MockHost: SynthHost {
     func copyPatch(bank: Int, slot: Int, to: Int) -> Int { 0 }
     func deleteBank(_ bank: Int) -> Bool { true }
     func exportBank(_ bank: Int, to dir: String) -> String { "" }
-    func importItems(_ paths: String) -> [String] { [] }
+    func importItems(_ paths: String) -> ImportOutcome { ImportOutcome(payload: "patches=0") }
     func setPatchCategory(bank: Int, slot: Int, category: Int) {}
     func setPatchFavourite(bank: Int, slot: Int, on: Bool) {}
     func addPatchTag(bank: Int, slot: Int, tag: String) {}

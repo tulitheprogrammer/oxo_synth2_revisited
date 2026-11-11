@@ -245,6 +245,11 @@ struct PatchBrowserView: View {
         HStack(spacing: 6) {
             Text(model.writing ? "Write patch" : "Banks")
                 .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.headerText)
+            if let notice = model.importNotice {
+                Text(notice).font(.system(size: 11)).foregroundColor(theme.headerText)
+                    .lineLimit(1).truncationMode(.middle)
+                    .oxoTruncationTooltip(notice, size: 11, optional: true)
+            }
             if model.libraryLoading && !model.banks.isEmpty { // the list shown may still change
                 Text("loading…").font(.system(size: 11)).foregroundColor(theme.headerText.opacity(0.6))
             }
@@ -259,13 +264,12 @@ struct PatchBrowserView: View {
                 button("New bank…", width: 72) { startNaming() }
                 button("Cancel") { model.closeBrowser() }
             } else {
-                #if os(macOS)
-                button("Import…") { model.fileAction = .importBanks }
-                button("Open library folder", width: 120) { Finder.open(model.host.libraryRoot) }
-                #else
-                // two pickers: the iOS one can't offer folders and files at once
+                // two pickers: one panel can't offer folders and files at
+                // once (macOS shows a folder package's contents instead)
                 button("Import folder…", width: 96) { model.fileAction = .importFolder }
                 button("Import files…", width: 90) { model.fileAction = .importBanks }
+                #if os(macOS)
+                button("Library", width: 60) { Finder.open(model.host.libraryRoot) }
                 #endif
                 button("Refresh") { model.refreshLibrary() }
                 PanelButton(title: "Close", width: 60, height: 20, icon: "xmark") { model.closeBrowser() }
@@ -1010,12 +1014,23 @@ struct FileActions: ViewModifier {
     #if os(macOS)
     private func run(_ action: FileAction) {
         switch action {
-        case .importBanks, .importFolder:
+        case .importFolder:
+            // Folders only: a panel that takes folders AND files makes
+            // NSOpenPanel show a package's contents instead of picking it.
             let panel = NSOpenPanel()
-            panel.message = "Import: bank folders, zip banks or .sy1 patches — copied into the library"
+            panel.message = "Import: bank folders (a Synth1 bankfolder works as is) — copied into the library"
+            panel.canChooseFiles = false
             panel.canChooseDirectories = true
             panel.allowsMultipleSelection = true
-            panel.allowedContentTypes = [.zip, sy1Type, .folder]
+            panel.allowedContentTypes = [.folder]
+            if panel.runModal() == .OK { model.importItems(panel.urls) }
+        case .importBanks:
+            let panel = NSOpenPanel()
+            panel.message = "Import: zip banks or .sy1 patches — copied into the library"
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = true
+            panel.allowedContentTypes = [.zip, sy1Type]
             if panel.runModal() == .OK { model.importItems(panel.urls) }
         case .loadPatch:
             let panel = NSOpenPanel()
