@@ -356,14 +356,22 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   (no stat per is_directory). Browser open / Refresh / editor open =
   `PatchManager::StartRescan` (worker thread, joined in the destructor;
   zip expansion under a process-wide mutex) → hooks `startLibraryScan` /
-  `libraryRevision` (polled at 30 Hz, adopts the finished scan) /
-  `libraryScanning`. The browser opens at once: "Loading…" with no list
-  yet, else the previous list + "loading…" in the header until the new one
-  swaps in. A library change on the UI thread meanwhile (write, move,
-  delete, import, sync rescan: `generation_`) wins, the worker's list is
-  dropped. The editor never scans synchronously at open (`syncProgram`
-  waits for a list); mutations still rescan synchronously (fast with the
-  cache).
+  `libraryRevision` (polled at 30 Hz, adopts the scan) / `libraryScanning`
+  / `libraryScanProgress`. A scan STREAMS: `StartRescan` EMPTIES the list
+  (a Refresh shows no stale patches) and every bank is handed to the
+  browser as it is scanned (`SetPublishSink` → a `pending` queue under a
+  mutex, `PollRescan` drains it), so a partial list is always a PREFIX of
+  the final one, bank indices stay put, and the patches already streamed
+  are loadable / writable / draggable while the rest scans. The header
+  shows a bar + "N/M banks · P patches" (`ScanProgress`, `M` =
+  `TopLevelCount` before the walk, exact afterwards; the browser's
+  `libraryScanFraction`). A selection whose bank has not streamed in yet
+  stays pending (nothing selected) instead of jumping to bank 0. A
+  library change on the UI thread meanwhile (write, move, delete, import,
+  sync rescan: `generation_`) wins, the worker's list is dropped and a
+  fresh `Rescan` restores a complete one. The editor never scans
+  synchronously at open (`syncProgram` waits for a list); mutations still
+  rescan synchronously (fast with the cache).
 - CATEGORIES, STARS AND TAGS (`EngineCore/PatchCategories.hpp`, tests
   `PatchCategoriesTests.cpp` + `PatchLibraryTagsTests.cpp`): each patch
   carries a TYPE, a STAR and free-form TAGS - never in a .sy1 (patches stay

@@ -199,6 +199,9 @@ public:
             return int32_t(C(c)->library_.Revision());
         };
         h.libraryScanning = [](void *c) { return int32_t(C(c)->library_.Scanning()); };
+        h.libraryScanProgress = [](void *c, int32_t *b, int32_t *p, int32_t *t) {
+            C(c)->library_.ScanProgress(*b, *p, *t);
+        };
         h.libraryNotice = [](void *c) { return C(c)->Keep(C(c)->library_.TakeNotice()); };
         h.libraryRoot = [](void *c) { return C(c)->Keep(C(c)->library_.Root().string()); };
         h.loadLibraryPatch = [](void *c, int32_t b, int32_t s) { return int32_t(C(c)->LoadLibraryPatch(b, s)); };

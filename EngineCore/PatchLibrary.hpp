@@ -407,6 +407,10 @@ public:
     std::vector<PatchBank> &Banks() { return banks_; }
     const std::vector<PatchBank> &Banks() const { return banks_; }
 
+    // Streams each finished bank to a listener (the background scan's queue);
+    // the synchronous Scan leaves it empty.
+    void SetPublishSink(std::function<void(const PatchBank &)> sink) { publish_ = std::move(sink); }
+
     int FindBySource(const std::string &source) const {
         for (size_t i = 0; i < banks_.size(); ++i)
             if (banks_[i].source == source) return int(i);
@@ -504,8 +508,7 @@ private:
     void AddFactory(const std::filesystem::path &factory) {
         std::error_code ec;
         if (factory.empty() || !std::filesystem::is_directory(factory, ec)) return;
-        AddFolderBank(factory, kFactoryBankName, FolderEntries(factory));
-        banks_.back().readOnly = true;
+        AddFolderBank(factory, kFactoryBankName, FolderEntries(factory), true);
     }
 
     // `isRoot`: loose .sy1 files directly in the root form a bank named
@@ -536,10 +539,11 @@ private:
     }
 
     void AddFolderBank(const std::filesystem::path &dir, const std::string &name,
-                       const std::vector<std::filesystem::directory_entry> &items) {
+                       const std::vector<std::filesystem::directory_entry> &items, bool readOnly = false) {
         PatchBank bank;
         bank.name = name;
         bank.source = dir.string();
+        bank.readOnly = readOnly; // before the publish: a streamed factory bank is read-only too
         std::vector<std::pair<std::string, PatchRef>> files;
         for (const auto &f : items) {
             const std::string fn = f.path().filename().string();
@@ -549,6 +553,7 @@ private:
         AssignSlots(bank, std::move(files));
         banks_.push_back(std::move(bank));
         found_ = stopAtPatch_ && banks_.back().Count() > 0;
+        if (publish_) publish_(banks_.back()); // streamed to the UI mid-scan
     }
 
     // A resolved reference: the stored category override beats the name rule,
@@ -569,6 +574,7 @@ private:
     std::vector<PatchBank> banks_;
     const TagStore *tags_ = nullptr; // nullptr = nobody tagged: no hashing
     bool stopAtPatch_ = false, found_ = false;
+    std::function<void(const PatchBank &)> publish_; // set by the background scan
 };
 
 // A program of the library: its bank folder RELATIVE to the library root
@@ -925,25 +931,100 @@ public:
         EnsureRoot();
         ready_ = false;
         tags_.Load(root_);
-        worker_ = std::thread([this, root = root_, factory = factory_, trash = trash_, gen = generation_, tags = tags_] {
+        // The browser shows what is being built, so the list it was showing
+        // goes away NOW (also on Refresh): it fills in bank by bank.
+        lib_ = PatchLibrary();
+        scanned_ = true; // not false: Json() would scan synchronously
+        scan_.Reset();
+        // The denominator is known before the worker starts: the count is of the
+        // library root's own entries, no file is opened for it.
+        scanTotal_.store(TopLevelCount(root_), std::memory_order_relaxed);
+        ++revision_;
+        const int gen = generation_;
+        worker_ = std::thread([this, root = root_, factory = factory_, trash = trash_, gen, tags = tags_] {
             BackgroundScan s;
             s.generation = gen;
+            s.lib.SetPublishSink([&s](const PatchBank &bank) {
+                std::lock_guard<std::mutex> lock(s.mu);
+                s.pending.push_back(bank);
+            });
             ExpandZips(root, trash, s.trashed, s.removed);
             s.lib.Scan(root, factory, &tags);
-            scan_ = std::move(s); // read by PollRescan after the join
+            std::lock_guard<std::mutex> lock(scan_.mu);
+            scan_.generation = s.generation;
+            scan_.lib = std::move(s.lib);
+            scan_.pending = std::move(s.pending);
+            scan_.trashed = std::move(s.trashed);
+            scan_.removed = std::move(s.removed);
             ready_.store(true, std::memory_order_release);
         });
     }
     // True = a new list was adopted (Revision() moved).
     bool PollRescan() {
-        if (!worker_.joinable() || !ready_.load(std::memory_order_acquire)) return false;
+        if (!worker_.joinable()) return false;
+        // Banks finished since the last poll: adopted while the scan still
+        // runs, so the list GROWS instead of arriving all at once. The scan
+        // order is the bank order (factory, then a depth-first walk), so a
+        // partial list is always a prefix and bank indices stay put.
+        std::vector<PatchBank> arrived;
+        {
+            std::lock_guard<std::mutex> lock(scan_.mu);
+            if (scan_.generation == generation_) arrived.swap(scan_.pending);
+        }
+        if (!arrived.empty()) {
+            for (PatchBank &b : arrived) lib_.Banks().push_back(std::move(b));
+            ++revision_;
+        }
+        if (!ready_.load(std::memory_order_acquire)) return !arrived.empty();
         worker_.join();
         trashed_.insert(trashed_.end(), scan_.trashed.begin(), scan_.trashed.end()); // done either way
         removed_.insert(removed_.end(), scan_.removed.begin(), scan_.removed.end());
         const bool fresh = scan_.generation == generation_;
-        if (fresh) lib_ = std::move(scan_.lib), scanned_ = true, ++revision_;
-        scan_ = {};
-        return fresh;
+        if (fresh) {
+            // The worker's own library holds every bank: the list on screen is
+            // that one, whatever it had adopted so far (a partial list is a
+            // prefix, so this only appends).
+            lib_.Banks() = std::move(scan_.lib.Banks());
+            lastScanTotal_.store(int32_t(lib_.Banks().size()), std::memory_order_relaxed);
+            ++revision_;
+        }
+        scan_.Reset();
+        scanned_ = true;
+        if (!fresh) Rescan(); // an edit won mid-stream: put the whole list back
+        return true;
+    }
+
+    int32_t LibraryPatchCount() const {
+        int32_t n = 0;
+        for (const PatchBank &b : lib_.Banks()) n += b.Count();
+        return n;
+    }
+
+    // Folders directly in the library root. Every one is a bank (or a
+    // container of them), so it is the closest cheap estimate of how many
+    // banks a scan will find. Loose root .sy1 files form a bank too.
+    static int32_t TopLevelCount(const std::filesystem::path &root) {
+        std::error_code ec;
+        int32_t n = 0;
+        bool loose = false;
+        for (const auto &e : FolderEntries(root)) {
+            if (e.is_directory(ec)) ++n;
+            else if (IsSy1(e.path().filename().string())) loose = true;
+        }
+        return n + (loose ? 1 : 0);
+    }
+
+    // Banks / patches on screen so far, out of what the scan estimates it
+    // will find: the finished scan's own total, else the number of folders in
+    // the library root (an honest denominator for a flat library; sub-banks
+    // are counted through their parent, so the estimate can undershoot and
+    // the browser stops calling it a fraction once it does).
+    void ScanProgress(int32_t &banks, int32_t &patches, int32_t &total) {
+        banks = int32_t(lib_.Banks().size());
+        patches = LibraryPatchCount();
+        total = worker_.joinable() ? scanTotal_.load(std::memory_order_relaxed)
+                                   : lastScanTotal_.load(std::memory_order_relaxed);
+        if (total < banks) total = banks; // the estimate may undershoot sub-banks
     }
     bool Scanning() const { return worker_.joinable(); }
     // Bumps on every change of the list (rescans, writes, an adopted
@@ -976,6 +1057,9 @@ public:
         EnsureScanned();
         // A rewrite changes the file's bytes, so its hash: the slot's star,
         // tags and category travel with it (the user edited THIS slot).
+        // A bank that has not streamed in yet is not on screen, so nothing can
+        // be written into it (the indices that ARE there are stable: a partial
+        // list is always a prefix of the final one).
         std::string oldHash;
         if (bank >= 0 && slot >= 0 && size_t(bank) < lib_.Banks().size() && slot < kBankSlots)
             oldHash = lib_.Banks()[size_t(bank)].slots[size_t(slot)].hash;
@@ -1286,10 +1370,28 @@ private:
     }
 
     using TrashFn = std::function<bool(const std::filesystem::path &)>;
+    // Built on the worker thread, drained by PollRescan on the UI thread. A
+    // finished bank is MOVED here (O(1)), never the whole growing list
+    // (O(n^2) over a scan), so the browser can show banks as they arrive.
     struct BackgroundScan {
         int generation = 0;
         PatchLibrary lib;
+        std::mutex mu;
+        std::vector<PatchBank> pending; // finished banks not yet adopted
         std::vector<std::string> trashed, removed;
+
+        BackgroundScan() = default;
+        BackgroundScan(const BackgroundScan &) = delete;
+        BackgroundScan &operator=(const BackgroundScan &) = delete;
+
+        // A mutex can't be assigned, so a finished scan is cleared by hand.
+        void Reset() {
+            std::lock_guard<std::mutex> lock(mu);
+            generation = 0;
+            lib = PatchLibrary();
+            pending.clear();
+            trashed.clear(), removed.clear();
+        }
     };
 
     // A zip put into the library counts as an import: extracted into a
@@ -1340,6 +1442,8 @@ private:
     int generation_ = 0, revision_ = 0; // generation: what a background scan must still match
     std::thread worker_;
     std::atomic<bool> ready_{false};
+    std::atomic<int32_t> scanTotal_{0}; // the running scan's denominator
+    std::atomic<int32_t> lastScanTotal_{0}; // banks the last finished scan found
     BackgroundScan scan_;
 };
 

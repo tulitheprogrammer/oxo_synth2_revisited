@@ -37,6 +37,10 @@ typedef struct OxoSynth2Hooks {
     void (*startLibraryScan)(void *ctx);
     int32_t (*libraryRevision)(void *ctx); // bumps whenever the list changes, 0 = never scanned
     int32_t (*libraryScanning)(void *ctx); // a background scan is running
+    // Progress of the running (or last finished) scan: banks that have
+    // streamed into the browser, patches they hold, banks expected (an
+    // estimate while scanning).
+    void (*libraryScanProgress)(void *ctx, int32_t *banks, int32_t *patches, int32_t *total);
     const char *(*libraryNotice)(void *ctx); // "X.zip imported and moved to Trash", "" = none; clears
     const char *(*libraryRoot)(void *ctx);
     int32_t (*loadLibraryPatch)(void *ctx, int32_t bank, int32_t slot);

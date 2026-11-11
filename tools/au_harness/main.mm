@@ -133,8 +133,21 @@ int main() {
                     "'/tmp/oxo_s2_ios_harness_lib/Finder Bank/001.sy1'");
         const int32_t rev = h.libraryRevision(h.ctx);
         h.startLibraryScan(h.ctx);
-        for (int i = 0; i < 2000 && (h.libraryScanning(h.ctx) || h.libraryRevision(h.ctx) == rev); ++i) usleep(1000);
-        expect(h.libraryRevision(h.ctx) != rev && !h.libraryScanning(h.ctx) &&
+        // streaming: banks arrive one at a time, the progress hook reads the
+        // streamed prefix back (denominator is known before the first bank)
+        int32_t b0 = 0, p0 = 0, t0 = 0;
+        h.libraryScanProgress(h.ctx, &b0, &p0, &t0);
+        expect(t0 >= 1, "scan progress knows the bank count up front");
+        for (int i = 0; i < 4000; ++i) {
+            const int32_t now = h.libraryRevision(h.ctx);
+            if (!h.libraryScanning(h.ctx) && now != rev) break;
+            usleep(500);
+        }
+        int32_t b1 = 0, p1 = 0, t1 = 0;
+        h.libraryScanProgress(h.ctx, &b1, &p1, &t1);
+        expect(!h.libraryScanning(h.ctx) && b1 >= 1 && p1 > 0 && t1 >= b1,
+               "scan progress reads back");
+        expect(h.libraryRevision(h.ctx) != rev &&
                    std::strstr(h.libraryJSON(h.ctx), "\"Finder Bank\"") != nullptr, "background rescan adopted");
     }
     // drag onto a bank = copy into its first free slot (bank 0 = "Finder Bank", 001 taken)

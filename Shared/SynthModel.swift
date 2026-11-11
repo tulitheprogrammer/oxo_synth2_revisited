@@ -34,6 +34,8 @@ public protocol SynthHost: AnyObject {
     /// Bumps whenever the bank list changes, 0 = never scanned.
     var libraryRevision: Int { get }
     var libraryScanning: Bool { get }
+    /// banks streamed into the browser so far, their patches, banks expected
+    var libraryScanProgress: (banks: Int, patches: Int, total: Int) { get }
     /// "X.zip imported and moved to Trash" since the last call, "" = none.
     func libraryNotice() -> String
     var libraryRoot: String { get }
@@ -272,6 +274,15 @@ final class SynthModel: ObservableObject {
     }
     /// A background rescan is running (the browser says "loading…").
     @Published private(set) var libraryLoading = false
+    /// How much of the library the running (or last) scan has delivered:
+    /// banks streamed in, their patches, banks the scan expects. The browser
+    /// shows a bar and keeps the streamed banks usable meanwhile.
+    @Published private(set) var libraryScan = (banks: 0, patches: 0, total: 0)
+    /// Fraction 0...1 for the progress bar (1 when no scan is running).
+    var libraryScanFraction: Double {
+        let total = max(libraryScan.total, libraryScan.banks, 1)
+        return libraryLoading ? min(1, Double(libraryScan.banks) / Double(total)) : 1
+    }
     /// Last Import… result, shown in the browser header for a few seconds
     /// (the LCD is behind the browser).
     @Published private(set) var importNotice: String?
@@ -399,6 +410,7 @@ final class SynthModel: ObservableObject {
         }
         let loading = host.libraryScanning
         if loading != libraryLoading { libraryLoading = loading }
+        if loading { libraryScan = host.libraryScanProgress }
         let voiceStates = host.voiceStates
         if voiceStates != voices.states { voices.states = voiceStates }
         let now = Date()
@@ -556,8 +568,14 @@ final class SynthModel: ObservableObject {
         tagVocabulary = info.tagVocab
         let notice = host.libraryNotice()
         if !notice.isEmpty { flash(notice, seconds: 10) }
+        // A streamed list holds only the banks scanned so far, so the bank on
+        // screen can be missing because its turn has not come yet. Keep
+        // waiting for it (nothing selected meanwhile) rather than jumping to
+        // bank 0 and back.
         if let keep, let i = banks.firstIndex(where: { $0.id == keep.id }) {
             currentBank = i
+        } else if keep != nil, libraryLoading {
+            currentBank = nil // not streamed in yet
         } else if currentBank.map({ $0 >= banks.count }) ?? true {
             currentBank = banks.isEmpty ? nil : 0
             currentProgram = nil
@@ -580,6 +598,7 @@ final class SynthModel: ObservableObject {
     func refreshLibrary() {
         host.startLibraryScan()
         libraryLoading = host.libraryScanning
+        libraryScan = host.libraryScanProgress
     }
 
     /// Rescans on every open: banks edited in Finder show up by themselves.
@@ -608,6 +627,10 @@ final class SynthModel: ObservableObject {
             if showBank { currentBank = p.bank }
             currentProgram = p.slot
             loadedBankID = banks[p.bank].id
+        } else if libraryLoading, host.loadedProgram() != nil {
+            // mid-stream: the program's bank has not streamed in yet; the
+            // selection resolved before is still right, and the next
+            // revision re-syncs.
         } else {
             currentProgram = nil
             loadedBankID = nil

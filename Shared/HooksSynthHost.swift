@@ -32,6 +32,11 @@ final class HooksSynthHost: SynthHost {
     func startLibraryScan() { h.startLibraryScan(h.ctx) }
     var libraryRevision: Int { Int(h.libraryRevision(h.ctx)) }
     var libraryScanning: Bool { h.libraryScanning(h.ctx) != 0 }
+    var libraryScanProgress: (banks: Int, patches: Int, total: Int) {
+        var b: Int32 = 0, p: Int32 = 0, t: Int32 = 0
+        h.libraryScanProgress?(h.ctx, &b, &p, &t)
+        return (Int(b), Int(p), Int(t))
+    }
     func libraryNotice() -> String { str(h.libraryNotice(h.ctx)) }
     var libraryRoot: String { str(h.libraryRoot(h.ctx)) }
     func loadLibraryPatch(bank: Int, slot: Int) -> Bool { h.loadLibraryPatch(h.ctx, Int32(bank), Int32(slot)) != 0 }

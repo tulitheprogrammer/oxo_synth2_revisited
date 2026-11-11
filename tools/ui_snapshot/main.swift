@@ -61,7 +61,7 @@ final class MockHost: SynthHost {
         var out = #"{"root":"/Users/me/Music/Oxo Music/Oxo Synth2","catNames":["#
         out += names.map { "\"\($0)\"" }.joined(separator: ",")
         out += #"],"tagVocab":["analog","bright","digital","fx","short","warm"],"banks":["#
-        out += banks.map { bank in
+        out += banks.prefix(bankPrefix).map { bank in
             #"{"name":"\#(bank.name)","source":"\#(bank.source)","slots":"# + slots(bank.patches)
                 + #","cats":"# + catsJSON(bank.patches) + #","favs":"# + favsJSON(bank.patches)
                 + #","tags":"# + tagsJSON(bank.patches) + "}"
@@ -72,6 +72,9 @@ final class MockHost: SynthHost {
     func startLibraryScan() {}
     var libraryRevision = 1
     var libraryScanning = false
+    var libraryScanProgress = (banks: 0, patches: 0, total: 0)
+    /// Streamed scans deliver a prefix of the banks; the mock serves that.
+    var bankPrefix = Int.max
     func libraryNotice() -> String { "" }
     var libraryRoot: String { "/tmp" }
     func loadLibraryPatch(bank: Int, slot: Int) -> Bool { true }
@@ -111,6 +114,12 @@ let mock = MockHost()
 let mode = args.count > 2 ? args[2] : ""
 if mode == "loading" { mock.libraryRevision = 0 }
 mock.libraryScanning = mode == "loading" || mode == "browser-loading"
+// browser-loading: a scan half way through, 2 of 3 banks already usable
+if mode == "browser-loading" {
+    mock.bankPrefix = 2
+    mock.libraryScanProgress = (banks: 2, patches: 7, total: 3)
+}
+if mode == "loading" { mock.libraryScanProgress = (banks: 0, patches: 0, total: 3) }
 let model = SynthModel(host: mock)
 if args.count > 2 {
     if mode != "loading" { model.loadLibrary() }

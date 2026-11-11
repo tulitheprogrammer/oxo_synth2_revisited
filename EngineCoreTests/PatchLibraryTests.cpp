@@ -560,13 +560,100 @@ OXO_TEST(BackgroundRescanNeverOverwritesNewerEdits) {
     m.Configure(root);
     m.Rescan();
     for (int round = 0; round < 20; ++round) {
+        // The list is cleared the moment a rescan starts, so nothing can be
+        // written until a bank has streamed in.
         m.StartRescan();
         Sy1Patch p;
         p.name = "Write " + std::to_string(round);
-        OXO_EXPECT(m.Write(0, 0, p));
         OXO_EXPECT(WaitScan(m));
+        OXO_EXPECT(m.Write(0, 0, p));
         OXO_EXPECT_EQ(m.Library().Banks()[0].slots[0].name, p.name);
     }
+    fs::remove_all(base);
+}
+
+// A scan streams: banks become loadable one by one while the scan still runs,
+// and the list on screen is always a prefix of the final one, so the browser's
+// bank indices stay put.
+OXO_TEST(BackgroundRescanStreamsBanksBeforeFinish) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_stream_test");
+    const fs::path root = base / "Synth2", factory = base / "Factory";
+    fs::create_directories(factory);
+    WriteFile(factory / "001.sy1", "Factory\nver=112\n");
+    for (int i = 0; i < 40; ++i) {
+        fs::create_directories(root / ("Bank" + std::to_string(100 + i)));
+        for (int j = 0; j < 8; ++j)
+            WriteFile(root / ("Bank" + std::to_string(100 + i)) / (std::to_string(1 + j) + "00.sy1"),
+                      "P" + std::to_string(i) + "_" + std::to_string(j) + "\nver=112\n");
+    }
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const std::vector<std::string> finalNames = [&] {
+        std::vector<std::string> v;
+        for (const PatchBank &b : m.Library().Banks()) v.push_back(b.name);
+        return v;
+    }();
+    OXO_EXPECT_EQ(finalNames.size(), size_t(41));
+
+    for (int round = 0; round < 10; ++round) {
+        m.StartRescan();
+        std::vector<std::string> prefix; // what the browser can see part-way
+        int32_t banks = 0, patches = 0, total = 0;
+        for (int i = 0; i < 4; ++i) {
+            m.PollRescan();
+            banks = 0, patches = 0, total = 0;
+            m.ScanProgress(banks, patches, total);
+            OXO_EXPECT_EQ(banks, int32_t(m.Library().Banks().size()));
+            OXO_EXPECT(total >= 40); // every root folder is a bank here
+            prefix.clear();
+            for (const PatchBank &b : m.Library().Banks()) prefix.push_back(b.name);
+            // Whatever has streamed in is usable straight away.
+            for (const PatchBank &b : m.Library().Banks()) {
+                const size_t n = size_t(std::count_if(b.slots.begin(), b.slots.end(),
+                                                     [](const PatchRef &r) { return !r.name.empty(); }));
+                OXO_EXPECT_EQ(n, b.name == kFactoryBankName ? size_t(1) : size_t(8));
+                OXO_EXPECT_EQ(int32_t(n), b.Count());
+            }
+        }
+        OXO_EXPECT(WaitScan(m));
+        const auto &banks_ = m.Library().Banks();
+        OXO_EXPECT_EQ(banks_.size(), finalNames.size());
+        // Streamed prefix and the finished list agree: nothing duplicated, no
+        // bank lost, order unchanged.
+        OXO_EXPECT(prefix.size() <= banks_.size());
+        for (size_t i = 0; i < prefix.size(); ++i) OXO_EXPECT_EQ(banks_[i].name, prefix[i]);
+        for (size_t i = 0; i < banks_.size(); ++i) OXO_EXPECT_EQ(banks_[i].name, finalNames[i]);
+        int32_t totalAfter = 0;
+        m.ScanProgress(banks, patches, totalAfter);
+        OXO_EXPECT_EQ(banks, int32_t(banks_.size()));
+        OXO_EXPECT_EQ(patches, int32_t(1 + 40 * 8));
+    }
+    fs::remove_all(base);
+}
+
+// A rescan starts from an empty list: no stale bank stays on screen, and
+// Json() (the hook the browser reads every poll) never blocks for a scan.
+OXO_TEST(BackgroundRescanClearsTheListFirst) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_clear_test");
+    const fs::path root = base / "Synth2";
+    fs::create_directories(root / "Old");
+    WriteFile(root / "Old" / "001.sy1", "Old\nver=112\n");
+    WriteFile(root / "111.sy1", "Root\nver=112\n");
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(2)); // User + the root's own
+    OXO_EXPECT(m.Json().find("\"Root\"") != std::string::npos);
+
+    m.StartRescan();
+    const std::string early = m.Json();
+    OXO_EXPECT(early.find("\"Root\"") == std::string::npos);
+    OXO_EXPECT(early.find("\"banks\":[") != std::string::npos);
+    OXO_EXPECT(WaitScan(m));
+    OXO_EXPECT(m.Json().find("\"Root\"") != std::string::npos);
+    OXO_EXPECT(m.Json().find("\"Old\"") != std::string::npos);
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(2));
     fs::remove_all(base);
 }
 

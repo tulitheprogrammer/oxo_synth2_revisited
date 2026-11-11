@@ -250,9 +250,7 @@ struct PatchBrowserView: View {
                     .lineLimit(1).truncationMode(.middle)
                     .oxoTruncationTooltip(notice, size: 11, optional: true)
             }
-            if model.libraryLoading && !model.banks.isEmpty { // the list shown may still change
-                Text("loading…").font(.system(size: 11)).foregroundColor(theme.headerText.opacity(0.6))
-            }
+            if model.libraryLoading { scanProgress }
             Spacer(minLength: 6)
             if naming {
                 field("new bank name", $newBankName, width: 180) { createBank() }
@@ -278,6 +276,23 @@ struct PatchBrowserView: View {
         .padding(.horizontal, 8)
         .frame(height: 28)
         .background(theme.header)
+    }
+
+    /// "Scanning 6/21 banks · 412 patches" with a bar: the streamed banks are
+    /// already usable, this only says how much of the library is in yet.
+    private var scanProgress: some View {
+        let banks = model.libraryScan.banks, total = max(model.libraryScan.total, banks, 1)
+        return HStack(spacing: 5) {
+            ZStack(alignment: .leading) {
+                Capsule().fill(theme.headerText.opacity(0.2)).frame(width: 60, height: 4)
+                Capsule().fill(theme.headerText.opacity(0.75))
+                    .frame(width: 60 * model.libraryScanFraction, height: 4)
+            }
+            Text("\(banks)/\(total) banks · \(model.libraryScan.patches) patches")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.headerText.opacity(0.7))
+                .fixedSize()
+        }
     }
 
     // MARK: search and filter
