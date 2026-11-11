@@ -474,9 +474,12 @@ class TagStore {
     // Missing / unreadable / corrupt = empty store (a broken sidecar must never
     // cost the user their library). A HIGHER version is refused wholesale: a
     // newer build's file must not be silently downgraded by an older one.
-    void Load(const std::filesystem::path &root) {
+    void Load(const std::filesystem::path &root) { LoadFile(root / kFileName); }
+
+    // A tags file anywhere (export / import on a new machine).
+    void LoadFile(const std::filesystem::path &file) {
         patches_.clear();
-        Decode(ReadFile(root / kFileName));
+        Decode(ReadFile(file));
     }
 
     // nullptr = nothing stored.
@@ -520,12 +523,23 @@ class TagStore {
         for (const auto &[hash, patch] : incoming.patches_) patches_[hash] = patch;
     }
 
+    // Add-only merge: keeps every record we already have (a file brought from
+    // another machine must never overwrite what was tagged here), returns how
+    // many records it added.
+    std::size_t MergeMissing(const TagStore &incoming) {
+        std::size_t added = 0;
+        for (const auto &[hash, patch] : incoming.patches_)
+            if (patches_.emplace(hash, patch).second) ++added;
+        return added;
+    }
+
     // Atomic: temp file + rename (same directory, so it stays on one volume).
-    bool Save(const std::filesystem::path &root) const {
+    bool Save(const std::filesystem::path &root) const { return SaveFile(root / kFileName); }
+
+    bool SaveFile(const std::filesystem::path &path) const {
         std::error_code ec;
-        std::filesystem::create_directories(root, ec);
-        const std::filesystem::path path = root / kFileName;
-        const std::filesystem::path tmp = root / (std::string(kFileName) + ".tmp");
+        std::filesystem::create_directories(path.parent_path(), ec);
+        const std::filesystem::path tmp = path.parent_path() / (path.filename().string() + ".tmp");
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
             if (!out) return false;

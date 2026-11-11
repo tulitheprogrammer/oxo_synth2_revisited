@@ -15,6 +15,7 @@
 // moved to the Trash. Bundled starter banks are copied in once
 // (SeedStarterBanks).
 
+#include "PatchCategories.hpp"
 #include "Sy1Codec.hpp"
 #include "TextEncoding.hpp"
 
@@ -211,6 +212,13 @@ inline std::vector<std::filesystem::path> FolderChildren(const std::filesystem::
 struct PatchRef {
     std::string name; // first line of the .sy1 ("" = empty slot)
     std::string file; // .sy1 path ("" = empty)
+    // Categories / favourites / tags (PatchCategories.hpp), resolved during
+    // the scan while the library has a TagStore. Kept off the .sy1: the
+    // format is third party and is never extended.
+    std::string hash; // lower hex SHA-256 of the file bytes ("" = not hashed)
+    int category = kCatUnclassified; // stored override, else derived from the name
+    bool favourite = false;
+    std::vector<std::string> tags;
     bool Empty() const { return file.empty(); }
 };
 
@@ -286,6 +294,76 @@ private:
     std::unordered_map<std::string, Entry> names_;
 };
 
+// SHA-256 of a patch file by file: same trick as PatchNameCache (rescan only
+// hashes new or changed files). Only consulted when the library has a
+// TagStore, so a library nobody tagged pays nothing.
+class PatchHashCache {
+public:
+    static PatchHashCache &Shared() {
+        static PatchHashCache cache;
+        return cache;
+    }
+    bool Hash(std::filesystem::directory_entry e, std::string &hash) {
+        std::error_code ec;
+        e.refresh(ec);
+        const std::uintmax_t size = e.file_size(ec);
+        if (ec) return false;
+        const std::filesystem::file_time_type time = e.last_write_time(ec);
+        if (ec) return false;
+        const std::string key = e.path().string();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto it = hashes_.find(key);
+            if (it != hashes_.end() && it->second.size == size && it->second.time == time) {
+                hash = it->second.hash;
+                return true;
+            }
+        }
+        std::string computed;
+        if (!Sha256File(e.path(), computed)) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        hashes_[key] = {size, time, computed};
+        hash = std::move(computed);
+        return true;
+    }
+    // A rewritten file must not be served from the cache by a stale stat.
+    void Forget(const std::string &path) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        hashes_.erase(path);
+    }
+
+private:
+    struct Entry {
+        std::uintmax_t size;
+        std::filesystem::file_time_type time;
+        std::string hash;
+    };
+    std::mutex mutex_;
+    std::unordered_map<std::string, Entry> hashes_;
+};
+
+// The store's record for a patch: category override, star, tags. `derived` =
+// what the name rule says (also used when the patch has no record), so a
+// cleared tag / star really clears.
+inline void ApplyStoredTags(PatchRef &ref, const TagStore &tags, int derived) {
+    ref.category = derived;
+    ref.favourite = false;
+    ref.tags.clear();
+    const PatchTags *stored = ref.hash.empty() ? nullptr : tags.Find(ref.hash);
+    if (stored == nullptr) return;
+    if (stored->overridden && IsCategory(stored->category)) ref.category = stored->category;
+    ref.favourite = stored->favourite;
+    ref.tags = stored->tags;
+}
+
+// Hashes a patch file unless that already happened (scans skip it while the
+// store is empty, so the first tag / star is what pays for a library's
+// hashes).
+inline bool EnsureHash(PatchRef &ref) {
+    if (!ref.hash.empty()) return true;
+    return !ref.file.empty() && Sha256File(ref.file, ref.hash);
+}
+
 // Synth1 slot number of a file name ("012.sy1" / "012_Lead.sy1" -> 11), -1 if none.
 inline int SlotFromFileName(const std::string &fileName) {
     int v = 0, digits = 0;
@@ -305,28 +383,48 @@ inline std::string SlotFileName(int slot) {
 class PatchLibrary {
 public:
     // `factory` = the read-only factory bank folder ("" / missing = none),
-    // listed first.
-    void Scan(const std::filesystem::path &root, const std::filesystem::path &factory = {}) {
+    // listed first. `tags` = the sidecar (nullptr / empty = no hashing at
+    // all, every slot Unclassified with no stars or tags).
+    void Scan(const std::filesystem::path &root, const std::filesystem::path &factory = {},
+              const TagStore *tags = nullptr) {
         banks_.clear();
         stopAtPatch_ = found_ = false;
+        tags_ = tags != nullptr && !tags->Empty() ? tags : nullptr;
         AddFactory(factory);
         ScanFolder(root, "", true);
     }
     // Like Scan, but stops after the first bank holding a patch (the banks
     // before it are the same as Scan's, so its index is Scan's too).
-    void ScanToFirstPatch(const std::filesystem::path &root, const std::filesystem::path &factory = {}) {
+    void ScanToFirstPatch(const std::filesystem::path &root, const std::filesystem::path &factory = {},
+                          const TagStore *tags = nullptr) {
         banks_.clear();
         stopAtPatch_ = true, found_ = false;
+        tags_ = tags != nullptr && !tags->Empty() ? tags : nullptr;
         AddFactory(factory);
         if (!found_) ScanFolder(root, "", true);
     }
 
+    std::vector<PatchBank> &Banks() { return banks_; }
     const std::vector<PatchBank> &Banks() const { return banks_; }
 
     int FindBySource(const std::string &source) const {
         for (size_t i = 0; i < banks_.size(); ++i)
             if (banks_[i].source == source) return int(i);
         return -1;
+    }
+
+    // Re-resolves one slot against the store (after a rewrite / tag edit) and
+    // returns its hash.
+    std::string ResolveTags(size_t bank, size_t slot, const TagStore &tags) {
+        if (bank >= banks_.size() || slot >= size_t(kBankSlots)) return {};
+        PatchRef &ref = banks_[bank].slots[slot];
+        if (!EnsureHash(ref)) return {};
+        ApplyStoredTags(ref, tags, DeriveCategory(ref.name, std::filesystem::path(ref.file).filename().string()));
+        return ref.hash;
+    }
+
+    const PatchRef *RefAt(size_t bank, size_t slot) const {
+        return bank < banks_.size() && slot < size_t(kBankSlots) ? &banks_[bank].slots[slot] : nullptr;
     }
 
     // The .sy1 file of a slot ("" = empty / out of range).
@@ -358,7 +456,8 @@ public:
         std::error_code ec;
         if (!b.slots[slot].Empty() && std::filesystem::path(b.slots[slot].file) != target)
             std::filesystem::remove(b.slots[slot].file, ec);
-        b.slots[slot] = {patch.name, target.string()};
+        PatchHashCache::Shared().Forget(target.string()); // rewritten bytes
+        b.slots[slot] = MakeRef(patch.name, target);
         return true;
     }
 
@@ -376,7 +475,9 @@ public:
             const std::filesystem::path target = std::filesystem::path(dst.source) / SlotFileName(s);
             if (!dst.slots[size_t(s)].Empty() || std::filesystem::exists(target, ec)) continue;
             if (!std::filesystem::copy_file(src.file, target, ec)) return -2;
-            dst.slots[size_t(s)] = {src.name, target.string()};
+            PatchRef ref = src; // identical bytes: same hash, star, tags
+            ref.file = target.string();
+            dst.slots[size_t(s)] = std::move(ref);
             return s;
         }
         return -1;
@@ -443,14 +544,30 @@ private:
         for (const auto &f : items) {
             const std::string fn = f.path().filename().string();
             std::string patchName;
-            if (IsSy1(fn) && PatchNameCache::Shared().Name(f, patchName)) files.push_back({fn, {patchName, f.path().string()}});
+            if (IsSy1(fn) && PatchNameCache::Shared().Name(f, patchName)) files.push_back({fn, MakeRef(patchName, f.path(), &f)});
         }
         AssignSlots(bank, std::move(files));
         banks_.push_back(std::move(bank));
         found_ = stopAtPatch_ && banks_.back().Count() > 0;
     }
 
+    // A resolved reference: the stored category override beats the name rule,
+    // derived categories work without any sidecar at all.
+    PatchRef MakeRef(const std::string &patchName, const std::filesystem::path &file,
+                     const std::filesystem::directory_entry *entry = nullptr) const {
+        PatchRef ref;
+        ref.name = patchName;
+        ref.file = file.string();
+        const int derived = DeriveCategory(ref.name, file.filename().string());
+        ref.category = derived;
+        if (tags_ == nullptr) return ref;
+        const bool hashed = entry != nullptr ? PatchHashCache::Shared().Hash(*entry, ref.hash) : Sha256File(file, ref.hash);
+        if (hashed) ApplyStoredTags(ref, *tags_, derived);
+        return ref;
+    }
+
     std::vector<PatchBank> banks_;
+    const TagStore *tags_ = nullptr; // nullptr = nobody tagged: no hashing
     bool stopAtPatch_ = false, found_ = false;
 };
 
@@ -747,6 +864,7 @@ public:
         root_ = root;
         factory_ = factory;
         EnsureRoot();
+        tags_.Load(root_);
         if (!factory.empty()) SeedStarterBanks(root_, factory.parent_path() / kStarterBanksFolder, build);
     }
     // Moves a file to the Trash, false = no Trash here (then it is deleted).
@@ -755,12 +873,14 @@ public:
     const std::filesystem::path &Root() const { return root_; }
     const std::filesystem::path &Factory() const { return factory_; }
     const PatchLibrary &Library() const { return lib_; }
+    const TagStore &Tags() const { return tags_; }
 
     void Rescan() {
         EnsureRoot();
         ++generation_;
+        tags_.Load(root_); // the sidecar may have changed under us (sync, import)
         ExpandZips(root_, trash_, trashed_, removed_);
-        lib_.Scan(root_, factory_);
+        lib_.Scan(root_, factory_, &tags_);
         scanned_ = true;
         ++revision_;
     }
@@ -775,11 +895,12 @@ public:
         if (worker_.joinable()) return;
         EnsureRoot();
         ready_ = false;
-        worker_ = std::thread([this, root = root_, factory = factory_, trash = trash_, gen = generation_] {
+        tags_.Load(root_);
+        worker_ = std::thread([this, root = root_, factory = factory_, trash = trash_, gen = generation_, tags = tags_] {
             BackgroundScan s;
             s.generation = gen;
             ExpandZips(root, trash, s.trashed, s.removed);
-            s.lib.Scan(root, factory);
+            s.lib.Scan(root, factory, &tags);
             scan_ = std::move(s); // read by PollRescan after the join
             ready_.store(true, std::memory_order_release);
         });
@@ -824,10 +945,27 @@ public:
     }
     bool Write(int bank, int slot, const Sy1Patch &p) {
         EnsureScanned();
+        // A rewrite changes the file's bytes, so its hash: the slot's star,
+        // tags and category travel with it (the user edited THIS slot).
+        std::string oldHash;
+        if (bank >= 0 && slot >= 0 && size_t(bank) < lib_.Banks().size() && slot < kBankSlots)
+            oldHash = lib_.Banks()[size_t(bank)].slots[size_t(slot)].hash;
+        PatchTags carried;
+        if (const PatchTags *stored = oldHash.empty() ? nullptr : tags_.Find(oldHash); stored != nullptr) carried = *stored;
         if (bank < 0 || slot < 0 || !lib_.Write(size_t(bank), size_t(slot), p)) return false;
+        const std::string newHash = lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+        if (!oldHash.empty() && oldHash != newHash) {
+            if (!carried.Empty() && !newHash.empty()) tags_.Set(newHash, carried);
+            // The old bytes are gone; keep their record while another slot
+            // still holds them (a copy of this patch).
+            if (!HashInUse(oldHash, bank, slot)) tags_.Set(oldHash, PatchTags());
+            lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+            SaveTags();
+        }
         ++generation_, ++revision_;
         return true;
     }
+
     int Copy(int bank, int slot, int to) {
         EnsureScanned();
         const int s = bank < 0 || slot < 0 || to < 0 ? -2 : lib_.Copy(size_t(bank), size_t(slot), size_t(to));
@@ -887,11 +1025,15 @@ public:
             return std::filesystem::is_directory(p, ec);
         });
         bool ok = true;
+        // Bank deletion implies its patches': nobody wants dead records
+        // (a hash never comes back, a re-copied file would inherit a star).
+        const std::vector<PatchRef> removed(banks[size_t(bank)].slots.begin(), banks[size_t(bank)].slots.end());
         if (wholeFolder) ok = Remove(dir);
         else
             for (const auto &p : items)
                 if (IsSy1(p.filename().string()) && !std::filesystem::is_directory(p, ec)) ok = Remove(p) && ok;
         Rescan();
+        if (ok) ForgetPatches(removed);
         return ok;
     }
 
@@ -910,6 +1052,13 @@ public:
         bool ok = true;
         for (const PatchRef &p : b.slots)
             if (!p.Empty()) ok = std::filesystem::copy_file(p.file, out / std::filesystem::path(p.file).filename(), ec) && ok;
+        // A sidecar of just this bank's records, so importing the folder on
+        // another machine restores its stars and tags. No records, no file.
+        TagStore carried;
+        for (const PatchRef &p : b.slots)
+            if (const PatchTags *stored = p.hash.empty() ? nullptr : tags_.Find(p.hash); stored != nullptr)
+                carried.Set(p.hash, *stored), carried.SetNameHint(p.hash, p.name);
+        if (ok && !carried.Empty()) ok = carried.SaveFile(out / TagStore::kFileName);
         return ok ? out.string() : std::string();
     }
 
@@ -929,27 +1078,184 @@ public:
 
     std::string Import(const std::string &paths) {
         EnsureRoot();
-        std::string added = ImportItemsText(root_, paths);
+        const std::string added = ImportItemsText(root_, paths);
+        // A categories.json brought along (a folder exported elsewhere, a
+        // library tagged on another machine) MERGES into ours: patches we
+        // already know keep their stars and tags, only hashes we never saw
+        // are added. Never replace - importing must not lose local work.
+        MergeBroughtTags(paths);
         Rescan();
         return added;
     }
 
-    // {"root":..,"banks":[{"name","source","readOnly","slots":[128 names, "" = empty]}]}
+    // ---- categories, favourites, tags ---------------------------------------
+    // Each mutation updates the slot in place (the caller's list stays right),
+    // saves the sidecar and does NOT rescan (nothing on disk moved).
+
+    // `category` = a kCat* value (kCatUnclassified stores an explicit
+    // "Unclassified"), or -1 = forget the override and derive it again.
+    bool SetCategory(int bank, int slot, int category) {
+        EnsureScanned();
+        PatchRef *ref = MutableRef(bank, slot);
+        if (ref == nullptr || !EnsureHash(*ref) || (category >= 0 && !IsCategory(category))) return false;
+        const std::string hash = ref->hash;
+        tags_.Update(hash, [&](PatchTags &patch) {
+            patch.category = category < 0 ? int(kCatUnclassified) : category;
+            patch.overridden = category >= 0;
+        });
+        lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+        return SaveTags();
+    }
+    // True = stars, false = un-stars (one call for both, the UI toggles).
+    bool SetFavourite(int bank, int slot, bool favourite) {
+        EnsureScanned();
+        PatchRef *ref = MutableRef(bank, slot);
+        if (ref == nullptr || !EnsureHash(*ref)) return false;
+        const std::string hash = ref->hash;
+        tags_.Update(hash, [&](PatchTags &patch) { patch.favourite = favourite; });
+        lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+        return SaveTags();
+    }
+    bool AddPatchTag(int bank, int slot, const std::string &tag) {
+        EnsureScanned();
+        PatchRef *ref = MutableRef(bank, slot);
+        if (ref == nullptr || !EnsureHash(*ref)) return false;
+        const std::string hash = ref->hash;
+        bool changed = false;
+        tags_.Update(hash, [&](PatchTags &patch) { changed = AddTag(patch, tag); });
+        if (!changed) return false; // full / duplicate / nothing left of it
+        lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+        return SaveTags();
+    }
+    bool RemovePatchTag(int bank, int slot, const std::string &tag) {
+        EnsureScanned();
+        PatchRef *ref = MutableRef(bank, slot);
+        if (ref == nullptr || !EnsureHash(*ref)) return false;
+        const std::string hash = ref->hash;
+        bool changed = false;
+        tags_.Update(hash, [&](PatchTags &patch) { changed = RemoveTag(patch, tag); });
+        if (!changed) return false;
+        lib_.ResolveTags(size_t(bank), size_t(slot), tags_);
+        return SaveTags();
+    }
+
+    // The tag chips: every tag in the library, sorted.
+    std::vector<std::string> TagVocabulary() const { return tags_.Vocabulary(); }
+
+    // "Tags…" > Export: the whole store (every patch of every library this
+    // user tagged, not just this folder) as one file to keep somewhere safe.
+    bool ExportTags(const std::filesystem::path &file) const { return tags_.SaveFile(file); }
+
+    // "Tags…" > Import: MERGE a file made on another machine into ours.
+    // Returns how many patches the file added; 0 = nothing new / unreadable.
+    int ImportTags(const std::filesystem::path &file) {
+        TagStore incoming;
+        incoming.LoadFile(file);
+        if (incoming.Empty()) return 0;
+        const std::size_t added = tags_.MergeMissing(incoming);
+        if (added == 0 || !SaveTags()) return 0;
+        Rescan(); // the list's stars / tags are now stale
+        return int(added);
+    }
+
+    // {"root":..,"catNames":[..],"tagVocab":[..],
+    //  "banks":[{"name","source","readOnly",
+    //            "slots":[128 names, "" = empty],
+    //            "cats":[128 kCat* values],"favs":[128 0/1],
+    //            "tags":[[128 lists of tags]]}]}
+    // The per-slot arrays are parallel to "slots", so the UI indexes them alike.
     std::string Json() {
         EnsureScanned();
-        std::string j = "{\"root\":" + JsonString(root_.string()) + ",\"banks\":[";
+        std::string j = "{\"root\":" + JsonString(root_.string()) + ",\"catNames\":[";
+        for (int c = 0; c < kCategoryCount; ++c) j += (c ? "," : "") + JsonString(CategoryName(c));
+        const std::vector<std::string> vocab = tags_.Vocabulary();
+        j += "],\"tagVocab\":[";
+        for (size_t t = 0; t < vocab.size(); ++t) j += (t ? "," : "") + JsonString(vocab[t]);
+        j += "],\"banks\":[";
         const auto &banks = lib_.Banks();
         for (size_t b = 0; b < banks.size(); ++b) {
             j += (b ? ",{" : "{");
             j += "\"name\":" + JsonString(banks[b].name) + ",\"source\":" + JsonString(banks[b].source) +
                  ",\"readOnly\":" + (banks[b].readOnly ? "true" : "false") + ",\"slots\":[";
             for (int s = 0; s < kBankSlots; ++s) j += (s ? "," : "") + JsonString(banks[b].slots[size_t(s)].name);
+            j += "],\"cats\":[";
+            for (int s = 0; s < kBankSlots; ++s)
+                j += (s ? "," : "") + std::to_string(banks[b].slots[size_t(s)].category);
+            j += "],\"favs\":[";
+            for (int s = 0; s < kBankSlots; ++s)
+                j += (s ? "," : "") + std::string(banks[b].slots[size_t(s)].favourite ? "1" : "0");
+            j += "],\"tags\":[";
+            for (int s = 0; s < kBankSlots; ++s) {
+                j += (s ? "," : "") + std::string("[");
+                const auto &tags = banks[b].slots[size_t(s)].tags;
+                for (size_t t = 0; t < tags.size(); ++t) j += (t ? "," : "") + JsonString(tags[t]);
+                j += "]";
+            }
             j += "]}";
         }
         return j + "]}";
     }
 
 private:
+    PatchRef *MutableRef(int bank, int slot) {
+        return bank >= 0 && slot >= 0 && size_t(bank) < lib_.Banks().size() && slot < kBankSlots
+                   ? &lib_.Banks()[size_t(bank)].slots[size_t(slot)]
+                   : nullptr;
+    }
+
+    // The sidecar is tiny: save it on every edit, so a crash never loses a
+    // star. No records at all = no file to keep.
+    bool SaveTags() {
+        if (tags_.Empty()) { // nothing tagged anywhere: no file to keep
+            std::error_code ec;
+            std::filesystem::remove(root_ / TagStore::kFileName, ec);
+            return true;
+        }
+        for (const auto &bank : lib_.Banks())
+            for (const PatchRef &ref : bank.slots)
+                if (!ref.hash.empty() && tags_.Find(ref.hash) != nullptr) tags_.SetNameHint(ref.hash, ref.name);
+        return tags_.Save(root_);
+    }
+
+    // A deleted patch's record goes with it.
+    void ForgetPatches(const std::vector<PatchRef> &slots) {
+        bool dropped = false;
+        for (const PatchRef &ref : slots)
+            if (!ref.hash.empty() && tags_.Find(ref.hash) != nullptr && !HashInUse(ref.hash, -1, -1))
+                tags_.Set(ref.hash, PatchTags()), dropped = true;
+        if (dropped) SaveTags();
+    }
+
+    // An imported FOLDER may carry a categories.json of its own (an exported
+    // bank does): its records MERGE into ours, never replacing ours.
+    void MergeBroughtTags(const std::string &sourcePaths) {
+        bool changed = false;
+        for (size_t at = 0; at < sourcePaths.size();) {
+            size_t end = sourcePaths.find('\n', at);
+            if (end == std::string::npos) end = sourcePaths.size();
+            const std::filesystem::path dir(sourcePaths.substr(at, end - at));
+            at = end + 1;
+            if (dir.empty()) continue;
+            std::error_code ec;
+            const std::filesystem::path file = dir / TagStore::kFileName;
+            if (!std::filesystem::is_regular_file(file, ec)) continue;
+            TagStore incoming;
+            incoming.LoadFile(file);
+            if (tags_.MergeMissing(incoming) > 0) changed = true;
+        }
+        if (changed) tags_.Save(root_);
+    }
+
+    // Another slot still holding these bytes (its tags must not be dropped
+    // when THIS slot is rewritten).
+    bool HashInUse(const std::string &hash, int bank, int slot) const {
+        const auto &banks = lib_.Banks();
+        for (size_t b = 0; b < banks.size(); ++b)
+            for (size_t s = 0; s < size_t(kBankSlots); ++s)
+                if (banks[b].slots[s].hash == hash && !(int(b) == bank && int(s) == slot)) return true;
+        return false;
+    }
+
     using TrashFn = std::function<bool(const std::filesystem::path &)>;
     struct BackgroundScan {
         int generation = 0;
@@ -998,6 +1304,7 @@ private:
 
     std::filesystem::path root_, factory_;
     PatchLibrary lib_;
+    TagStore tags_;
     bool scanned_ = false;
     TrashFn trash_;
     std::vector<std::string> trashed_, removed_;
