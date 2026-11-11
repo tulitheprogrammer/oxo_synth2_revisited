@@ -1,6 +1,6 @@
 // Renders the editor with a mock host to PNG (layout eye-check without a DAW).
 //   swiftc Shared/*.swift tools/ui_snapshot/main.swift -o build/ui/snap
-//   ./build/ui/snap out.png [browser|browser-loading|loading|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank]
+//   ./build/ui/snap out.png [browser|browser-loading|loading|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank|filter|tags]
 import AppKit
 import SwiftUI
 
@@ -30,13 +30,43 @@ final class MockHost: SynthHost {
     func loadPatchFile(_ path: String) -> Bool { true }
     func savePatchFile(_ path: String) -> Bool { true }
     func libraryJSON() -> String {
-        func slots(_ names: [String]) -> String {
-            "[" + (0..<128).map { $0 < names.count ? "\"\(names[$0])\"" : "\"\"" }.joined(separator: ",") + "]"
+        // marks chosen so a filter run leaves some patches in and some out:
+        // types 2 Lead / 4 Pad / 3 Pluck / 14 FX, stars on slot 0, tags on
+        // the even slots
+        let names = ["Unclassified", "Bass", "Lead", "Pluck", "Pad", "Strings", "Brass", "Keys",
+                     "Organ", "Piano", "Bell", "Arp", "Chord", "Sequence", "FX", "Perc", "Vocal",
+                     "Guitar", "Wind", "Mallet", "Texture", "Init"]
+        let banks: [(name: String, source: String, patches: [(String, Int, Bool, [String])])] = [
+            ("Leads", "b", [("Mono Lead", 2, true, ["bright"]), ("Sync Lead", 2, false, []),
+                            ("Fat Saw", 2, false, ["analog", "warm"])]),
+            ("Synth1Patches / Pads", "c", [("Init", 21, false, []), ("Warm Pad", 4, true, ["warm"]),
+                                           ("Glass Pad", 4, false, ["bright", "digital"]), ("Air", 0, false, [])]),
+            ("User", "a", [("My Lead", 2, false, []), ("", 0, false, []), ("Pluck", 3, true, ["short"]),
+                           ("Zap", 14, false, ["fx"])]),
+        ]
+        func slots(_ patches: [(String, Int, Bool, [String])]) -> String {
+            "[" + (0..<128).map { $0 < patches.count ? "\"\(patches[$0].0)\"" : "\"\"" }.joined(separator: ",") + "]"
         }
-        return #"{"root":"/Users/me/Music/Oxo Music/Oxo Synth2","banks":["#
-            + #"{"name":"Leads","source":"b","slots":"# + slots(["Mono Lead", "Sync Lead", "Fat Saw"]) + "},"
-            + #"{"name":"Synth1Patches / Pads","source":"c","slots":"# + slots(["Init"]) + "},"
-            + #"{"name":"User","source":"a","slots":"# + slots(["My Lead", "", "Pad"]) + "}]}"
+        func catsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
+            "[" + (0..<128).map { $0 < patches.count ? "\(patches[$0].1)" : "0" }.joined(separator: ",") + "]"
+        }
+        func favsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
+            "[" + (0..<128).map { $0 < patches.count && patches[$0].2 ? "true" : "false" }.joined(separator: ",") + "]"
+        }
+        func tagsJSON(_ patches: [(String, Int, Bool, [String])]) -> String {
+            "[" + (0..<128).map { i in
+                i < patches.count ? "[" + patches[i].3.map { "\"\($0)\"" }.joined(separator: ",") + "]" : "[]"
+            }.joined(separator: ",") + "]"
+        }
+        var out = #"{"root":"/Users/me/Music/Oxo Music/Oxo Synth2","catNames":["#
+        out += names.map { "\"\($0)\"" }.joined(separator: ",")
+        out += #"],"tagVocab":["analog","bright","digital","fx","short","warm"],"banks":["#
+        out += banks.map { bank in
+            #"{"name":"\#(bank.name)","source":"\#(bank.source)","slots":"# + slots(bank.patches)
+                + #","cats":"# + catsJSON(bank.patches) + #","favs":"# + favsJSON(bank.patches)
+                + #","tags":"# + tagsJSON(bank.patches) + "}"
+        }.joined(separator: ",") + "]}"
+        return out
     }
     func rescanLibrary() {}
     func startLibraryScan() {}
@@ -53,6 +83,13 @@ final class MockHost: SynthHost {
     func deleteBank(_ bank: Int) -> Bool { true }
     func exportBank(_ bank: Int, to dir: String) -> String { "" }
     func importItems(_ paths: String) -> [String] { [] }
+    func setPatchCategory(bank: Int, slot: Int, category: Int) {}
+    func setPatchFavourite(bank: Int, slot: Int, on: Bool) {}
+    func addPatchTag(bank: Int, slot: Int, tag: String) {}
+    func removePatchTag(bank: Int, slot: Int, tag: String) {}
+    func exportTags(_ path: String) -> Bool { true }
+    func importTags(_ path: String) -> Int { 0 }
+    func tagVocabulary() -> String { "warm\nanalog\nbright\nchill" }
     func name(_ id: Int) -> String { "param \(id)" }
     func displayName(_ id: Int) -> String { name(id) }
     var learned: [Int: Int] = [19: 74, 20: 71]
@@ -104,6 +141,11 @@ if args.count > 2 {
         model.openBrowser()
         model.load(bank: 1, slot: 1)
         if args[2] == "delete-bank" { model.bankToDelete = model.banks[0].id }
+        // filter: a type chip + the star on, so the dimmed slots / banks show
+        // filter: one type chip on, so banks / slots that do not match dim
+        if args[2] == "filter" { model.categoryFilter = 4 }
+        // the tag dialog for the loaded patch
+        if args[2] == "tags" { model.tagEdit = (1, 1) }
     }
 }
 let width = 1155.0

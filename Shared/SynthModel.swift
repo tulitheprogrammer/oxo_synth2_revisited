@@ -55,6 +55,21 @@ public protocol SynthHost: AnyObject {
     /// Copies into the library and rescans; newline-separated paths in,
     /// the new top-level folders out.
     func importItems(_ paths: String) -> [String]
+    /// Categories, favourites, tags (EngineCore/PatchCategories.hpp).
+    /// Records are keyed by the patch's bytes, so the marks follow a patch
+    /// through renames, imports and a new setup.
+    /// `category` = index into `categoryNames`, -1 = back to the name rule.
+    func setPatchCategory(bank: Int, slot: Int, category: Int)
+    func setPatchFavourite(bank: Int, slot: Int, on: Bool)
+    func addPatchTag(bank: Int, slot: Int, tag: String)
+    func removePatchTag(bank: Int, slot: Int, tag: String)
+    /// The whole store as JSON -> `path`, true = written.
+    func exportTags(_ path: String) -> Bool
+    /// Merges a store file into ours (marks we already have win, so a new
+    /// setup never loses its own work), then rescans. -1 = unreadable.
+    func importTags(_ path: String) -> Int
+    /// Tags in use, one per line, "" = none yet.
+    func tagVocabulary() -> String
     /// MIDI learn: plugin-global table (0 = not learned) and the latest
     /// "a CC arrived" token ((counter << 7) | cc, 0 = none yet).
     func midiCC(_ id: Int) -> Int
@@ -91,22 +106,54 @@ struct PatchBankInfo: Decodable, Identifiable, Equatable {
     let slots: [String]
     /// The factory bank (plugin bundle): no write / move / delete.
     let readOnly: Bool
+    /// Type, per slot (index into `LibraryInfo.categoryNames`). Derived
+    /// from the patch name, or whatever the user set.
+    let categories: [Int]
+    let favourites: [Bool]
+    /// User tags per slot, already normalised / sorted by the engine.
+    let tags: [[String]]
     var id: String { source }
 
-    private enum CodingKeys: String, CodingKey { case name, source, slots, readOnly }
+    private enum CodingKeys: String, CodingKey { case name, source, slots, readOnly, cats, favs, tags }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         source = try c.decode(String.self, forKey: .source)
         slots = try c.decode([String].self, forKey: .slots)
         readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+        // Parallel to `slots`, so they index alike; a missing array (an
+        // older document) simply means "Unclassified, unstarred, no tags".
+        categories = try c.decodeIfPresent([Int].self, forKey: .cats) ?? []
+        favourites = (try c.decodeIfPresent([Bool].self, forKey: .favs) ?? [])
+        tags = try c.decodeIfPresent([[String]].self, forKey: .tags) ?? []
     }
+
     var count: Int { slots.filter { !$0.isEmpty }.count }
+
+    func category(_ slot: Int) -> Int { slot < categories.count ? categories[slot] : 0 }
+    func isFavourite(_ slot: Int) -> Bool { slot < favourites.count && favourites[slot] }
+    func tags(_ slot: Int) -> [String] { slot < tags.count ? tags[slot] : [] }
 }
 
 private struct LibraryInfo: Decodable {
     let root: String
+    let categoryNames: [String]
+    let tagVocab: [String]
     let banks: [PatchBankInfo]
+
+    private enum CodingKeys: String, CodingKey { case root, catNames, tagVocab, banks }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try c.decodeIfPresent(String.self, forKey: .root) ?? ""
+        categoryNames = try c.decodeIfPresent([String].self, forKey: .catNames) ?? []
+        tagVocab = try c.decodeIfPresent([String].self, forKey: .tagVocab) ?? []
+        banks = try c.decode([PatchBankInfo].self, forKey: .banks)
+    }
+
+    /// Name for a `cats` value ("Unclassified" when out of range).
+    func categoryName(_ category: Int) -> String {
+        category >= 0 && category < categoryNames.count ? categoryNames[category] : "Unclassified"
+    }
 }
 
 /// File dialogs the panel presents (NSOpenPanel / NSSavePanel on mac, the
@@ -116,6 +163,8 @@ private struct LibraryInfo: Decodable {
 enum FileAction: Equatable {
     case importBanks, importFolder, loadPatch, savePatch
     case exportBank(String)
+    /// The portable categories / tags file (categories.json).
+    case exportTags, importTags
 }
 
 /// Editor state mirrored from the host by a 30 Hz poll (host automation,
@@ -133,6 +182,60 @@ final class SynthModel: ObservableObject {
     @Published private(set) var patchName: String
     @Published private(set) var banks: [PatchBankInfo] = []
     @Published private(set) var libraryRoot = ""
+    /// Category names the engine's `cats` values index into.
+    @Published private(set) var categoryNames: [String] = []
+    /// Every tag in use, sorted (tag dialog's suggestions).
+    @Published private(set) var tagVocabulary: [String] = []
+    /// Browser search text (patch / bank name, category, tags).
+    @Published var librarySearch = ""
+    /// Browser filter: a category index, `favouritesOnly` or nil = all.
+    @Published var categoryFilter: Int?
+    @Published var favouritesOnly = false
+
+    // MARK: - browser filter
+
+    var hasActiveFilter: Bool {
+        categoryFilter != nil || favouritesOnly
+            || !librarySearch.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    func clearLibraryFilter() {
+        categoryFilter = nil
+        favouritesOnly = false
+        librarySearch = ""
+    }
+
+    /// Patches of a given type (decides which chips are worth showing).
+    func categoryCount(_ category: Int) -> Int {
+        banks.reduce(0) { total, bank in
+            total + bank.slots.indices.reduce(0) { inner, slot in
+                inner + (!bank.slots[slot].isEmpty && bank.category(slot) == category ? 1 : 0)
+            }
+        }
+    }
+
+    /// A slot passes search text + type + star. The bank's name takes part
+    /// in the text match, so "chill" finds a whole bank's patches too.
+    func slotMatches(bank: Int, slot: Int) -> Bool {
+        guard bank >= 0, bank < banks.count, slot >= 0, slot < banks[bank].slots.count,
+              !banks[bank].slots[slot].isEmpty else { return false }
+        let info = banks[bank]
+        if favouritesOnly && !info.isFavourite(slot) { return false }
+        if let category = categoryFilter, info.category(slot) != category { return false }
+        let needle = librarySearch.trimmingCharacters(in: .whitespaces).lowercased()
+        if needle.isEmpty { return true }
+        if info.slots[slot].lowercased().contains(needle) { return true }
+        if info.name.lowercased().contains(needle) { return true }
+        if categoryName(info.category(slot)).lowercased().contains(needle) { return true }
+        return info.tags(slot).contains { $0.lowercased().contains(needle) }
+    }
+
+    /// Patches of a bank that pass the filter (0 dims the row while one is on).
+    func matchCount(bank: Int) -> Int {
+        guard bank >= 0, bank < banks.count else { return 0 }
+        guard hasActiveFilter else { return banks[bank].count }
+        return banks[bank].slots.indices.reduce(0) { $0 + (slotMatches(bank: bank, slot: $1) ? 1 : 0) }
+    }
     /// A background rescan is running (the browser says "loading…").
     @Published private(set) var libraryLoading = false
     /// `host.libraryRevision` of `banks`.
@@ -152,6 +255,9 @@ final class SynthModel: ObservableObject {
     /// Browser > Delete bank…: the bank (id) awaiting the in-browser
     /// confirmation, nil = none.
     @Published var bankToDelete: String?
+    /// Browser > Edit tags…: the slot whose category / star / tags the
+    /// in-browser dialog edits, nil = none.
+    @Published var tagEdit: (bank: Int, slot: Int)?
     @Published var fileAction: FileAction?
     /// The in-panel Themes dialog (menu > Themes…).
     @Published var showThemes = false
@@ -404,6 +510,8 @@ final class SynthModel: ObservableObject {
               let info = try? JSONDecoder().decode(LibraryInfo.self, from: data) else { return }
         banks = info.banks
         libraryRoot = info.root
+        categoryNames = info.categoryNames
+        tagVocabulary = info.tagVocab
         let notice = host.libraryNotice()
         if !notice.isEmpty { flash(notice, seconds: 10) }
         if let keep, let i = banks.firstIndex(where: { $0.id == keep.id }) {
@@ -446,6 +554,7 @@ final class SynthModel: ObservableObject {
         showBrowser = false
         writing = false
         bankToDelete = nil
+        tagEdit = nil
     }
 
     /// LCD / browser selection from the host's program (a fresh instance
@@ -517,6 +626,10 @@ final class SynthModel: ObservableObject {
         guard showBrowser else { return false }
         if bankToDelete != nil { // the confirmation: Esc cancels, nothing else reaches the browser
             if key == .escape { bankToDelete = nil }
+            return true
+        }
+        if tagEdit != nil { // Esc closes it; its text field keeps the rest
+            if key == .escape { tagEdit = nil }
             return true
         }
         if key == .escape {
@@ -670,6 +783,61 @@ final class SynthModel: ObservableObject {
             currentBank = i
         }
         flash(added.isEmpty ? "nothing imported" : "imported \(added.count) item(s)")
+    }
+
+    // MARK: - categories, favourites and tags
+
+    /// A slot's marks in the current bank list (nil = empty / out of range).
+    func patchMark(bank: Int, slot: Int) -> (category: Int, favourite: Bool, tags: [String])? {
+        guard bank >= 0, bank < banks.count, slot >= 0, slot < banks[bank].slots.count,
+              !banks[bank].slots[slot].isEmpty else { return nil }
+        return (banks[bank].category(slot), banks[bank].isFavourite(slot), banks[bank].tags(slot))
+    }
+
+    func categoryName(_ category: Int) -> String {
+        category >= 0 && category < categoryNames.count ? categoryNames[category] : "Unclassified"
+    }
+
+    /// `category` = -1 puts the slot back on the name rule.
+    func setCategory(bank: Int, slot: Int, _ category: Int) {
+        host.setPatchCategory(bank: bank, slot: slot, category: category)
+        loadLibrary()
+    }
+
+    func toggleFavourite(bank: Int, slot: Int) {
+        guard let mark = patchMark(bank: bank, slot: slot) else { return }
+        host.setPatchFavourite(bank: bank, slot: slot, on: !mark.favourite)
+        loadLibrary()
+    }
+
+    func addTag(_ tag: String, bank: Int, slot: Int) {
+        let clean = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        host.addPatchTag(bank: bank, slot: slot, tag: clean)
+        loadLibrary()
+    }
+
+    func removeTag(_ tag: String, bank: Int, slot: Int) {
+        host.removePatchTag(bank: bank, slot: slot, tag: tag)
+        loadLibrary()
+    }
+
+    /// Writes the whole store to `path` (the portable file to keep).
+    func exportTags(_ path: String) -> Bool {
+        let ok = host.exportTags(path)
+        flash(ok ? "categories and tags saved" : "could not save categories and tags")
+        return ok
+    }
+
+    /// Merges a store file from another setup: marks we already have win.
+    func importTags(_ path: String) {
+        let added = host.importTags(path)
+        loadLibrary()
+        if added < 0 {
+            flash("not a Synth2 categories file")
+        } else {
+            flash(added == 0 ? "no new categories or tags" : "added marks for \(added) patch(es)")
+        }
     }
 
     func allNotesOff() {

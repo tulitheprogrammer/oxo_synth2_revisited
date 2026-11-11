@@ -214,6 +214,27 @@ public:
             return C(c)->Keep(d ? C(c)->library_.ExportBank(b, d) : std::string());
         };
         h.importItems = [](void *c, const char *p) { return C(c)->Keep(C(c)->library_.Import(p ? p : "")); };
+        // libraryJSON() re-reads the scan every call, so an edit needs no
+        // notification: the editor re-reads it and sees the new marks.
+        h.setPatchCategory = [](void *c, int32_t b, int32_t s, int32_t cat) {
+            C(c)->library_.SetCategory(b, s, cat);
+        };
+        h.setPatchFavourite = [](void *c, int32_t b, int32_t s, int32_t on) {
+            C(c)->library_.SetFavourite(b, s, on != 0);
+        };
+        h.addPatchTag = [](void *c, int32_t b, int32_t s, const char *t) {
+            C(c)->library_.AddPatchTag(b, s, t ? t : "");
+        };
+        h.removePatchTag = [](void *c, int32_t b, int32_t s, const char *t) {
+            C(c)->library_.RemovePatchTag(b, s, t ? t : "");
+        };
+        h.exportTags = [](void *c, const char *p) { return int32_t(p != nullptr && C(c)->library_.ExportTags(p)); };
+        h.importTags = [](void *c, const char *p) { return int32_t(C(c)->library_.ImportTags(p ? p : "")); };
+        h.tagVocabulary = [](void *c) {
+            std::string text;
+            for (const std::string &tag : C(c)->library_.TagVocabulary()) text += tag + '\n';
+            return C(c)->Keep(std::move(text));
+        };
         h.midiCC = [](void *c, int32_t id) { return C(c)->MidiCC(id); };
         h.setMidiCC = [](void *c, int32_t id, int32_t cc) { C(c)->SetMidiCC(id, cc); };
         h.lastCC = [](void *c) { return C(c)->LastCC(); };

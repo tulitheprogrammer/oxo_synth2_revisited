@@ -52,6 +52,22 @@ typedef struct OxoSynth2Hooks {
     // Copies folders / extracts zips / loose .sy1 into the library and
     // rescans; paths newline-separated in, new top-level folders out.
     const char *(*importItems)(void *ctx, const char *paths);
+    // Categories, favourites, tags (EngineCore/PatchCategories.hpp): a
+    // sidecar at the library root, keyed by the patch bytes, so a patch
+    // keeps its marks through renames, imports and a fresh setup.
+    // `category` = index into libraryJSON's "catNames", -1 = drop the
+    // override and derive from the name again.
+    void (*setPatchCategory)(void *ctx, int32_t bank, int32_t slot, int32_t category);
+    void (*setPatchFavourite)(void *ctx, int32_t bank, int32_t slot, int32_t on);
+    void (*addPatchTag)(void *ctx, int32_t bank, int32_t slot, const char *tag);
+    void (*removePatchTag)(void *ctx, int32_t bank, int32_t slot, const char *tag);
+    // The whole store as JSON text -> written to `path`, false = failed.
+    int32_t (*exportTags)(void *ctx, const char *path);
+    // Merges a store into ours (records we already have win) and rescans;
+    // -> records added, -1 = unreadable.
+    int32_t (*importTags)(void *ctx, const char *path);
+    // The tags in use, one per line ("" = none yet).
+    const char *(*tagVocabulary)(void *ctx);
     // MIDI learn (plugin-global table, persisted by the wrapper).
     int32_t (*midiCC)(void *ctx, int32_t id);                  // 0 = not learned
     void (*setMidiCC)(void *ctx, int32_t id, int32_t cc);      // 0 = unlearn
