@@ -78,7 +78,8 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   + `LegacyTables.hpp` (GENERATED from `reference/meta`), `InitPatch.hpp`,
   `ParamFormat.hpp` (value labels; `DisplayName` = LCD name, effect knobs
   per effect type), `MidiLearn.hpp` (learn table, CC scaling, JSON),
-  `PatchLibrary.hpp` (banks, zip reader, import, `PatchManager`),
+  `PatchCategories.hpp` (22 types, name rules, SHA-256, tag store),
+  `PatchLibrary.hpp` (banks, zip reader, import, `PatchManager`, tags),
   `TextEncoding.hpp` (legacy names: Shift-JIS / Windows-1252 → UTF-8),
   `Jobs.hpp` (s1ref job format → our engine, WAV writer).
 - `EditorCore/` portable editor services: `OxoSynth2Bridge.h` (C hooks
@@ -319,7 +320,22 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   (`libraryMenu`): mac right click = [Export bank…,] Show in Finder[,
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder
-  (mac only).
+  (mac only). A patch's own menu adds Add / Remove star and Edit tags…
+  on both.
+- FILTER BAR (under the header, hidden while writing): free text (patch
+  name, bank name, category name, tags), the 22 type chips ("All" first,
+  Unclassified only once something is in it), the star-only chip, a "…"
+  menu (export / import categories and tags, clear filter) and Clear. It
+  narrows SLOTS in every bank at once: a non-matching slot stays in place
+  (drag / copy still land) but fades to 0.3, the loaded patch stays
+  legible, and a bank shows "matching / total" and dims when nothing
+  matches but stays selectable (copy workflows). Client-side in Swift, so
+  no EngineCore work and no rescan.
+- TagDialog (`Edit tags…`, drawn in the browser like DeleteBankDialog):
+  the add field at the TOP (clear of the iPad keyboard), suggestions from
+  the tags already in use (`.prefix(32)`), the tag list with remove
+  buttons, a type picker over "Auto" + the 22 names ("Auto" = drop the
+  override, back on the name rule) and the Starred toggle.
 - SCAN SPEED (measured on 150 banks x 128 = 19,200 .sy1): `PatchNameCache`
   (process-wide, path + size + mtime) → only new / changed files are
   opened for their name (rescan 60 ms vs 0.5–1.5 s uncached);
@@ -335,6 +351,34 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   dropped. The editor never scans synchronously at open (`syncProgram`
   waits for a list); mutations still rescan synchronously (fast with the
   cache).
+- CATEGORIES, STARS AND TAGS (`EngineCore/PatchCategories.hpp`, tests
+  `PatchCategoriesTests.cpp` + `PatchLibraryTagsTests.cpp`): each patch
+  carries a TYPE, a STAR and free-form TAGS - never in a .sy1 (patches stay
+  portable Synth1 files), in ONE sidecar `categories.json` at the library
+  root, keyed by the SHA-256 of the patch FILE BYTES (not its path), so
+  moving / renaming / re-copying a patch keeps its marks. Records:
+  `{version, patches: {<sha256 hex>: {name, tags, favourite, category}}}`,
+  the category by NAME (absent = derive it), `name` only a comment. Save =
+  temp + rename; no records = no file.
+  - the 22 TYPES (Bass, Lead, Pluck, Pad, Strings, Brass, Keys, Organ,
+    Piano, Bell, Arp, Chord, Sequence, FX, Perc, Vocal, Guitar, Wind,
+    Mallet, Texture, Init, + Unclassified) are TYPE-ONLY: character and use
+    are tags, so a "dark pad" is one type and two tags. Derived from the
+    patch name by ~100 ordered rules (last match wins), overridable per
+    slot; Unclassified when nothing matches.
+  - tags: at most 12 per patch, 24 chars, case-insensitive uniqueness
+    (`NormalizeTag`), kept sorted so the file diffs cleanly.
+  - hashing is per library and opt-in: `Scan` leaves `tags_` null while the
+    store is empty, so an untagged library pays nothing. A patch is hashed
+    on its first tag edit and cached (`PatchHashCache`, path + size + mtime).
+  - `ExportTags` writes the sidecar to a chosen folder; `ImportTags` MERGES
+    it (`MergeMissing`, add-only) so an old file never undoes local edits.
+  - it is a LIBRARY file, not plugin state: `PatchManager::Configure` loads
+    it, and `libraryJSON` re-reads the scan on every call, so a tag edit
+    needs no notification. Hooks `setPatchCategory` (-1 = drop override),
+    `setPatchFavourite`, `addPatchTag` / `removePatchTag` (the patch's
+    location = bank id + slot, like `copyPatch`), `exportTags` /
+    `importTags` (int32 results) and `tagVocabulary` (one per line).
 - EXPORT BANK (`PatchManager::ExportBank`, hook `exportBank`, FileAction
   `.exportBank(id)`): pick a target folder (mac NSOpenPanel folders only,
   iPad picker on `[.folder]`); a folder named after the bank's (" 2" when
