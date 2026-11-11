@@ -66,8 +66,10 @@ Per-user settings: mac `~/Library/Application Support/Oxo Music/Oxo Synth2`
 (`midi_mappings.json`, `themes.json`, `settings.json`), iPad the appex's
 container. Bank library: mac `~/Music/Oxo Music/Oxo Synth2`, iPad `<app
 group>/Synth2`.
-VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
-+ the two plists' AudioComponents integer `version` (by hand, 65536 = 1.0).
+VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`.
+The AUv2's AudioComponents integer `version` is derived from
+MARKETING_VERSION by CMake (major*65536 + minor*256 + patch, 65536 = 1.0);
+the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 
 ## Layout
 
