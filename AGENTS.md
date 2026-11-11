@@ -370,7 +370,10 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
     (`NormalizeTag`), kept sorted so the file diffs cleanly.
   - hashing is per library and opt-in: `Scan` leaves `tags_` null while the
     store is empty, so an untagged library pays nothing. A patch is hashed
-    on its first tag edit and cached (`PatchHashCache`, path + size + mtime).
+    on its first tag edit and cached (`PatchHashCache`, path + size + mtime,
+    process-wide): on 19,200 patches the first tag edit costs ~210 ms more
+    (666 vs 452 ms cold), then rescans match the untagged ones (262 / 238 ms
+    warm) and only new / changed files are read again.
   - `ExportTags` writes the sidecar to a chosen folder; `ImportTags` MERGES
     it (`MergeMissing`, add-only) so an old file never undoes local edits.
   - it is a LIBRARY file, not plugin state: `PatchManager::Configure` loads
