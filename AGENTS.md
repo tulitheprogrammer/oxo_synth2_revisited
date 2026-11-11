@@ -328,8 +328,11 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   with file types the picker navigates into folders - on iOS there is then
   no Open button, on macOS a folder package opens) / Import files… (zip /
   .sy1, multiple) / Library (mac: the library folder in the Finder) /
-  Refresh / Close, plus the last import's notice for 5 s. Rescans on every
-  open. Bank / slot menu
+  Refresh / Random / Close, plus the last import's notice for 5 s. Random
+  (also the LCD menu's "Random patch", and mid-scan) = a reservoir sample
+  over the non-empty slots the filter lets through, so it hunts undiscovered
+  sounds inside the current filter; nothing matching = a flash, no load.
+  Rescans on every open. Bank / slot menu
   (`libraryMenu`): mac right click = [Export bank…,] Show in Finder[,
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder

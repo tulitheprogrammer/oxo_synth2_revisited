@@ -103,6 +103,7 @@ struct BottomBar: View {
             // Library chores (Import…, library folder, Refresh) live in the
             // browser's header; write = the red button.
             Button("Initialize patch") { model.initializePatch() }
+            Button("Random patch") { model.randomPatch() }
             Divider()
             Button("Load patch file…") { model.fileAction = .loadPatch }
             Button("Save patch file…") { model.fileAction = .savePatch }
@@ -270,6 +271,7 @@ struct PatchBrowserView: View {
                 button("Library", width: 60) { Finder.open(model.host.libraryRoot) }
                 #endif
                 button("Refresh") { model.refreshLibrary() }
+                PanelButton(title: "Random", width: 74, height: 20, icon: "die.face.5") { model.randomPatch() }
                 PanelButton(title: "Close", width: 60, height: 20, icon: "xmark") { model.closeBrowser() }
             }
         }

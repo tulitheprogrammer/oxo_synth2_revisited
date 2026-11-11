@@ -668,6 +668,27 @@ final class SynthModel: ObservableObject {
         }
     }
 
+    /// Load a random patch, honouring the browser filter ("find undiscovered
+    /// sounds"). Reservoir sample over the slots on screen: one pass, no
+    /// allocation, empty slots never win.
+    func randomPatch() {
+        if banks.isEmpty { loadLibrary() }
+        var pick: (bank: Int, slot: Int)?
+        var seen = 0
+        for b in banks.indices {
+            for p in banks[b].slots.indices {
+                guard !banks[b].slots[p].isEmpty, slotMatches(bank: b, slot: p) else { continue }
+                seen += 1
+                if Int.random(in: 0..<seen) == 0 { pick = (b, p) }
+            }
+        }
+        guard let pick else {
+            flash(hasActiveFilter ? "no patch matches the filter" : "library is empty")
+            return
+        }
+        load(bank: pick.bank, slot: pick.slot)
+    }
+
     /// Rows of the browser's 4-column slot grid (filled top to bottom).
     static func browserRows(_ count: Int) -> Int { (count + 3) / 4 }
 
