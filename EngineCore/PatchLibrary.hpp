@@ -1392,7 +1392,7 @@ public:
     // {"root":..,"catNames":[..],"tagVocab":[..],
     //  "banks":[{"name","source","readOnly",
     //            "slots":[128 names, "" = empty],
-    //            "cats":[128 kCat* values],"favs":[128 0/1],
+    //            "cats":[128 kCat* values],"favs":[128 true/false],
     //            "tags":[[128 lists of tags]]}]}
     // The per-slot arrays are parallel to "slots", so the UI indexes them alike.
     std::string Json() {
@@ -1414,7 +1414,7 @@ public:
                 j += (s ? "," : "") + std::to_string(banks[b].slots[size_t(s)].category);
             j += "],\"favs\":[";
             for (int s = 0; s < kBankSlots; ++s)
-                j += (s ? "," : "") + std::string(banks[b].slots[size_t(s)].favourite ? "1" : "0");
+                j += (s ? "," : "") + std::string(banks[b].slots[size_t(s)].favourite ? "true" : "false");
             j += "],\"tags\":[";
             for (int s = 0; s < kBankSlots; ++s) {
                 j += (s ? "," : "") + std::string("[");

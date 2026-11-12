@@ -340,6 +340,10 @@ OXO_TEST(JsonCarriesCategoryFavouriteAndTags) {
     OXO_EXPECT(json.find("\"tagVocab\":[\"growl\"]") != std::string::npos);
     OXO_EXPECT(json.find("\"cats\":[") != std::string::npos);
     OXO_EXPECT(json.find("\"favs\":[") != std::string::npos);
+    // JSON booleans, not 0/1: the Swift browser decodes these as [Bool],
+    // and a number there failed the WHOLE document (an empty-looking
+    // library) instead of just the flags.
+    OXO_EXPECT(json.find("\"favs\":[false,true") != std::string::npos);
     OXO_EXPECT(json.find("\"tags\":[[") != std::string::npos);
     // The name list is still there, unchanged, so old readers keep working.
     OXO_EXPECT(json.find("\"slots\":[\"Alpha Pad\"") != std::string::npos);

@@ -110,6 +110,22 @@ final class VoiceActivity: ObservableObject {
     @Published fileprivate(set) var states: UInt64 = 0
 }
 
+/// One flag, tolerant of both `true`/`false` and `0`/`1`. The engine emits
+/// booleans; documents written by older builds held numbers, and a decode
+/// failure there used to blank the entire browser.
+private struct LooseBit: Decodable {
+    let value: Bool
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let flag = try? c.decode(Bool.self) {
+            value = flag
+        } else {
+            value = try c.decode(Int.self) != 0
+        }
+    }
+}
+
 /// One bank = a folder of the library, 128 program slots ("" = empty),
 /// Synth1's numbering.
 struct PatchBankInfo: Decodable, Identifiable, Equatable {
@@ -138,7 +154,7 @@ struct PatchBankInfo: Decodable, Identifiable, Equatable {
         // Parallel to `slots`, so they index alike; a missing array (an
         // older document) simply means "Unclassified, unstarred, no tags".
         categories = try c.decodeIfPresent([Int].self, forKey: .cats) ?? []
-        favourites = (try c.decodeIfPresent([Bool].self, forKey: .favs) ?? [])
+        favourites = try c.decodeIfPresent([LooseBit].self, forKey: .favs)?.map(\.value) ?? []
         tags = try c.decodeIfPresent([[String]].self, forKey: .tags) ?? []
         colors = try c.decodeIfPresent([String].self, forKey: .colors) ?? []
     }
@@ -342,6 +358,10 @@ final class SynthModel: ObservableObject {
     /// (the LCD is behind the browser).
     @Published private(set) var importNotice: String?
     private var importNoticeHide: Date?
+    /// Why the last `loadLibrary` could not read the engine's JSON. A
+    /// decode failure is a bug, not an empty library: say so instead of
+    /// leaving the browser looking like it has no banks.
+    @Published private(set) var libraryError: String?
     /// `host.libraryRevision` of `banks`.
     private var libraryRevision = 0
     /// Bank shown in the browser / LCD, and the loaded program slot.
@@ -627,8 +647,18 @@ final class SynthModel: ObservableObject {
         let keep = currentBank.flatMap { $0 < banks.count ? banks[$0] : nil }
         if rescan { host.rescanLibrary() }
         libraryRevision = host.libraryRevision // before the JSON: a scan adopted by this read is in it
-        guard let data = host.libraryJSON().data(using: .utf8),
-              let info = try? JSONDecoder().decode(LibraryInfo.self, from: data) else { return }
+        guard let data = host.libraryJSON().data(using: .utf8) else { return }
+        let info: LibraryInfo
+        do {
+            info = try JSONDecoder().decode(LibraryInfo.self, from: data)
+        } catch {
+            // Never let this be a silent no-op: a decode failure here used
+            // to leave `banks` empty and look exactly like an empty library.
+            libraryError = Self.describe(error: error)
+            flash("LIBRARY: \(libraryError!)", seconds: 10)
+            return
+        }
+        libraryError = nil
         banks = info.banks
         libraryRoot = info.root
         categoryNames = info.categoryNames
@@ -1000,6 +1030,33 @@ final class SynthModel: ObservableObject {
         importNotice = text
         importNoticeHide = Date().addingTimeInterval(5)
         flash(text, seconds: 5)
+    }
+
+    /// Short "where / what" for a library JSON decode failure, e.g.
+    /// `banks[0].favs[3]`. A blank browser with no message hides a
+    /// programming error behind "the library is empty".
+    static func describe(error: Error) -> String {
+        guard let decoding = error as? DecodingError else { return error.localizedDescription }
+        func path(_ keys: [CodingKey]) -> String {
+            keys.reduce(into: "") { out, key in
+                if let i = key.intValue { out += "[\(i)]" } else { out += out.isEmpty ? key.stringValue : ".\(key.stringValue)" }
+            }
+        }
+        func where_(_ ctx: DecodingError.Context) -> String {
+            let p = path(ctx.codingPath)
+            return p.isEmpty ? "library" : p
+        }
+        switch decoding {
+        case let .keyNotFound(key, ctx):
+            let p = where_(ctx)
+            return p.isEmpty ? "missing \(key.stringValue)" : "\(p).\(key.stringValue): missing"
+        case let .typeMismatch(_, ctx), let .valueNotFound(_, ctx):
+            return "\(where_(ctx)): \(ctx.debugDescription)"
+        case let .dataCorrupted(ctx):
+            return ctx.debugDescription
+        @unknown default:
+            return error.localizedDescription
+        }
     }
 
     /// "imported 3 patches into Imported" - the browser header shows this

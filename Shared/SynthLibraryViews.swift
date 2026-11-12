@@ -473,7 +473,8 @@ struct PatchBrowserView: View {
                     if model.writing && !model.banks.isEmpty && model.userBank == nil { newUserBankRow }
                     if model.banks.isEmpty {
                         Text(model.libraryLoading ? "Loading…"
-                             : "No banks. Import… copies bank folders, zip banks or .sy1 patches into the library.")
+                             : model.libraryError.map { "Can't read the library: \($0)" }
+                               ?? "No banks. Import… copies bank folders, zip banks or .sy1 patches into the library.")
                             .oxoFont(10).foregroundColor(Theme.lcdText.opacity(0.7)).padding(8 * scale)
                     }
                 }
