@@ -177,7 +177,11 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 
 - `./build_vst3.sh` → builds and installs `OxoSynth2.vst3` + `Oxo
   Synth2.component` into ~/Library/Audio/Plug-Ins. `--no-install` = build
-  only. Validator 47/47 (`OxoSynth2VST3/build/bin/Release/validator
+  only. The AU's nested `Contents/Resources/plugin.vst3` is a SYMLINK in
+  the build tree, so the install replaces it with a real copy and re-signs
+  the component adhoc (like `tools/prepare_mac_installer`): a symlink there
+  breaks the strict code seal and dies with the checkout. Validator 47/47
+  (`OxoSynth2VST3/build/bin/Release/validator
   <bundle>`; run it with `HOME=$(mktemp -d)` to keep your library out of
   it), `auval -v aumu OXS2 OXOM`.
 - iPad: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
