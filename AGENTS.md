@@ -510,6 +510,20 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   = mac, the iPad gets themes only), themes. Resize = C callback
   passed to `OxoSynth2EditorCreate` → `plugFrame->resizeView`. Window
   aspect-locked, width in NSUserDefaults `oxo.synth2.editorWidth`.
+- SCALING (no `.scaleEffect` anywhere): every panel number is a DESIGN-space
+  length in the 770x560 grid; layout, widget intrinsics and fonts multiply by
+  `\.scale` and text is laid out at final size, so it stays crisp at any UI
+  size (a transform would rasterise at design size and blur). `SynthPanelView`
+  sets `\.scale` ONCE, last, inside `panel(scale:)` — never at `body`, because
+  the `FileActions` modifier lives there and the macOS panels must stay 1:1.
+  Fonts go through `.oxoFont(size, weight, design)`; `.frame` / `.padding` /
+  `spacing` literals get `* scale`; absolute placement uses `.at(x, y)`
+  (`Placed`). A `@Environment(\.scale)` reads the environment ABOVE the view,
+  so `SynthPanelView` itself cannot see the value it exports: its section
+  builders take `scale` as a parameter, and `View` extensions (e.g.
+  `slotDraggable`) must receive it too. **Inside a `Menu`'s `label:` closure
+  never use `.oxoFont`** (its extra wrapper view perturbs layout even at scale
+  1 = 1 px shifts): inline `.font(.system(size: N * scale, weight: …))`.
 - TOOLTIPS: only `.oxoTruncationTooltip` on cut patch / bank names in the
   browser (first 0.5 s, then instant while warm); no help tips, no
   `.help()`; hover via `onContinuousHover`.

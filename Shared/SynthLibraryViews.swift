@@ -11,6 +11,7 @@ private let sy1Type = UTType(filenameExtension: "sy1") ?? .data
 struct BottomBar: View {
     @ObservedObject var model: SynthModel
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -37,16 +38,16 @@ struct BottomBar: View {
                     .place(758 - VoiceGrid.size.width, 34 - VoiceGrid.size.height / 2, VoiceGrid.size.width, VoiceGrid.size.height)
             } else {
                 Button(action: { model.exitLearn() }) {
-                    Text("Exit MIDI Learn").font(.system(size: 12, weight: .semibold))
+                    Text("Exit MIDI Learn").oxoFont(12, .semibold)
                         .foregroundColor(Color(red: 0.95, green: 0.87, blue: 0.87))
-                        .frame(width: 200, height: 28)
+                        .frame(width: 200 * scale, height: 28)
                         .background(RoundedRectangle(cornerRadius: 4).fill(Theme.red))
                         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.black.opacity(0.6), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .place(540, 4, 200, 28)
                 Text("Click a control, then move a controller knob.\nDouble-click a control to clear its CC.")
-                    .font(.system(size: 9.5)).foregroundColor(theme.dimInk).fixedSize()
+                    .oxoFont(9.5).foregroundColor(theme.dimInk).fixedSize()
                     .place(540, 36, 210, 30)
             }
         }
@@ -71,7 +72,7 @@ struct BottomBar: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.black, lineWidth: 1.5))
                 .onTapGesture { toggleBrowser() }
             Text(programPrefix + model.patchName)
-                .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                .oxoFont(17, .semibold, design: .monospaced)
                 .foregroundColor(Theme.lcdText)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -84,7 +85,7 @@ struct BottomBar: View {
             }
             .place(348, 9, 76, 20)
             Text(model.readout ?? bankLine)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .oxoFont(13, .medium, design: .monospaced)
                 .foregroundColor(model.readout == nil ? Theme.lcdText.opacity(0.85) : theme.displayText)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -121,15 +122,16 @@ struct BottomBar: View {
         } label: {
             // .button + .plain: the label is drawn as-is (centred), not
             // re-laid out by the borderless menu style.
-            Text("menu").font(.system(size: 11, weight: .semibold)).foregroundColor(Theme.buttonText)
-                .frame(width: 50, height: 26)
+            // Inline font, not .oxoFont: see MenuDisplay.
+            Text("menu").font(.system(size: 11 * scale, weight: .semibold)).foregroundColor(Theme.buttonText)
+                .frame(width: 50 * scale, height: 26)
                 .background(ButtonFace())
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .frame(width: 50, height: 26)
+        .frame(width: 50 * scale, height: 26)
     }
 }
 
@@ -139,6 +141,7 @@ struct BottomBar: View {
 struct VoiceGrid: View {
     @ObservedObject var activity: VoiceActivity
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
     let polyphony: Int
     /// Exactly the Voice section's width (216 incl. the outer lines).
     static let columns = 16, rows = 2, cell: CGFloat = 215.0 / 16
@@ -184,6 +187,7 @@ struct VoiceGrid: View {
 struct PatchBrowserView: View {
     @ObservedObject var model: SynthModel
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
     @State private var target: Int?
     @State private var name = ""
     @State private var newBankName = ""
@@ -206,8 +210,8 @@ struct PatchBrowserView: View {
             header
             if !model.writing { filterBar }
             HStack(spacing: 0) {
-                bankList.frame(width: 190).frame(maxHeight: .infinity)
-                Rectangle().fill(theme.edge).frame(width: 1)
+                bankList.frame(width: 190 * scale).frame(maxHeight: .infinity)
+                Rectangle().fill(theme.edge).frame(width: 1 * scale)
                 // iOS: a ScrollView takes its ideal width otherwise
                 slotGrid.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -248,9 +252,9 @@ struct PatchBrowserView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Text(model.writing ? "Write patch" : "Banks")
-                .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.headerText)
+                .oxoFont(12, .semibold).foregroundColor(theme.headerText)
             if let notice = model.importNotice {
-                Text(notice).font(.system(size: 11)).foregroundColor(theme.headerText)
+                Text(notice).oxoFont(11).foregroundColor(theme.headerText)
                     .lineLimit(1).truncationMode(.middle)
                     .oxoTruncationTooltip(notice, size: 11, optional: true)
             }
@@ -278,8 +282,8 @@ struct PatchBrowserView: View {
                 PanelButton(title: "Close", width: 60, height: 20, icon: "xmark") { model.closeBrowser() }
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
+        .padding(.horizontal, 8 * scale)
+        .frame(height: 28 * scale)
         .background(theme.header)
     }
 
@@ -287,14 +291,14 @@ struct PatchBrowserView: View {
     /// already usable, this only says how much of the library is in yet.
     private var scanProgress: some View {
         let banks = model.libraryScan.banks, total = max(model.libraryScan.total, banks, 1)
-        return HStack(spacing: 5) {
+        return HStack(spacing: 5 * scale) {
             ZStack(alignment: .leading) {
-                Capsule().fill(theme.headerText.opacity(0.2)).frame(width: 60, height: 4)
+                Capsule().fill(theme.headerText.opacity(0.2)).frame(width: 60 * scale, height: 4)
                 Capsule().fill(theme.headerText.opacity(0.75))
-                    .frame(width: 60 * model.libraryScanFraction, height: 4)
+                    .frame(width: 60 * model.libraryScanFraction * scale, height: 4 * scale)
             }
             Text("\(banks)/\(total) banks · \(model.libraryScan.patches) patches")
-                .font(.system(size: 10, design: .monospaced))
+                .oxoFont(10, design: .monospaced)
                 .foregroundColor(theme.headerText.opacity(0.7))
                 .fixedSize()
         }
@@ -310,21 +314,21 @@ struct PatchBrowserView: View {
         HStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10)).foregroundColor(theme.displayText.opacity(0.7))
+                    .oxoFont(10).foregroundColor(theme.displayText.opacity(0.7))
                 TextField("search patches", text: $model.librarySearch)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11, design: .monospaced))
+                    .oxoFont(11, design: .monospaced)
                     .foregroundColor(theme.displayText)
                 if !model.librarySearch.isEmpty {
                     Button { model.librarySearch = "" } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10)).foregroundColor(theme.displayText.opacity(0.6))
+                            .oxoFont(10).foregroundColor(theme.displayText.opacity(0.6))
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 6)
-            .frame(height: 20)
+            .padding(.horizontal, 6 * scale)
+            .frame(height: 20 * scale)
             .background(RoundedRectangle(cornerRadius: 3).fill(theme.display))
 
             categoryChips
@@ -339,8 +343,8 @@ struct PatchBrowserView: View {
                 button("Clear", width: 52) { model.clearLibraryFilter() }
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 26)
+        .padding(.horizontal, 8 * scale)
+        .frame(height: 26 * scale)
         .background(theme.header.opacity(0.85))
     }
 
@@ -348,7 +352,7 @@ struct PatchBrowserView: View {
     /// not fit and the browser is narrow on iPad.
     private var categoryChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 3) {
+            HStack(spacing: 3 * scale) {
                 chip("All", active: model.categoryFilter == nil) { model.categoryFilter = nil }
                 ForEach(0 ..< max(model.categoryNames.count, 1), id: \.self) { c in
                     if c < model.categoryNames.count {
@@ -362,7 +366,7 @@ struct PatchBrowserView: View {
                     }
                 }
             }
-            .padding(.vertical, 1)
+            .padding(.vertical, 1 * scale)
         }
         .frame(maxWidth: 360)
     }
@@ -370,10 +374,10 @@ struct PatchBrowserView: View {
     private func chip(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 10))
+                .oxoFont(10)
                 .foregroundColor(active ? theme.lcdBottom : theme.displayText)
-                .padding(.horizontal, 6)
-                .frame(height: 18)
+                .padding(.horizontal, 6 * scale)
+                .frame(height: 18 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(active ? theme.displayText : theme.display))
                 .contentShape(Rectangle())
         }
@@ -383,10 +387,10 @@ struct PatchBrowserView: View {
     private var starChip: some View {
         Button { model.favouritesOnly.toggle() } label: {
             Image(systemName: model.favouritesOnly ? "star.fill" : "star")
-                .font(.system(size: 11))
+                .oxoFont(11)
                 .foregroundColor(model.favouritesOnly ? Theme.red : theme.displayText.opacity(0.7))
-                .padding(.horizontal, 5)
-                .frame(height: 18)
+                .padding(.horizontal, 5 * scale)
+                .frame(height: 18 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(theme.display))
                 .contentShape(Rectangle())
         }
@@ -407,9 +411,10 @@ struct PatchBrowserView: View {
             Button("Clear filter") { model.clearLibraryFilter() }
                 .disabled(!model.hasActiveFilter)
         } label: {
-            Text("⋯").font(.system(size: 11, weight: .bold))
+            // Inline font, not .oxoFont: see MenuDisplay.
+            Text("⋯").font(.system(size: 11 * scale, weight: .bold))
                 .foregroundColor(theme.displayText.opacity(0.7))
-                .padding(.horizontal, 5).frame(height: 18)
+                .padding(.horizontal, 5 * scale).frame(height: 18 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(theme.display))
                 .contentShape(Rectangle())
         }
@@ -436,9 +441,9 @@ struct PatchBrowserView: View {
     private func field(_ prompt: String, _ text: Binding<String>, width: CGFloat, submit: @escaping () -> Void) -> some View {
         TextField(prompt, text: text)
             .textFieldStyle(.plain)
-            .font(.system(size: 12, design: .monospaced))
+            .oxoFont(12, design: .monospaced)
             .foregroundColor(Theme.lcdText)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 6 * scale)
             .frame(width: width, height: 20)
             .background(RoundedRectangle(cornerRadius: 3).fill(theme.displayFill))
             .onSubmit(submit)
@@ -454,10 +459,10 @@ struct PatchBrowserView: View {
                     if model.banks.isEmpty {
                         Text(model.libraryLoading ? "Loading…"
                              : "No banks. Import… copies bank folders, zip banks or .sy1 patches into the library.")
-                            .font(.system(size: 10)).foregroundColor(Theme.lcdText.opacity(0.7)).padding(8)
+                            .oxoFont(10).foregroundColor(Theme.lcdText.opacity(0.7)).padding(8 * scale)
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, 4 * scale)
             }
             .scrollDeadZone()
             // Keyboard steps roll into other banks: keep the bank in view.
@@ -481,9 +486,9 @@ struct PatchBrowserView: View {
             Text(model.hasActiveFilter ? "\(model.matchCount(bank: b))/\(info.count)" : "\(info.count)")
                 .opacity(0.6)
         }
-        .font(.system(size: 11, design: .monospaced))
+        .oxoFont(11, design: .monospaced)
         .foregroundColor(selected ? theme.lcdBottom : Theme.lcdText)
-        .padding(.horizontal, 6).padding(.vertical, 3)
+        .padding(.horizontal, 6 * scale).padding(.vertical, 3 * scale)
         .background(selected ? theme.displayText : Color.clear)
         .overlay(Rectangle().strokeBorder(theme.displayText, lineWidth: dropBank == b ? 1.5 : 0))
         .opacity(locked ? 0.35 : filterMiss ? 0.45 : 1)
@@ -513,7 +518,7 @@ struct PatchBrowserView: View {
                             if s < count { slotCell(b, s) } else { Color.clear }
                         }
                     }
-                    .padding(6)
+                    .padding(6 * scale)
                 }
             }
             .scrollDeadZone()
@@ -545,17 +550,17 @@ struct PatchBrowserView: View {
         let tint = patch.isEmpty ? nil : PatchColorEdit.tint(info.color(s))
         return HStack(spacing: 2) {
             if let mark, mark.favourite {
-                Image(systemName: "star.fill").font(.system(size: 7, weight: .bold))
+                Image(systemName: "star.fill").oxoFont(7, .bold)
                     .foregroundColor(selected ? theme.lcdBottom : theme.displayText)
             }
             Text(text)
-                .font(.system(size: 11, design: .monospaced))
+                .oxoFont(11, design: .monospaced)
                 .foregroundColor(selected ? theme.lcdBottom : patch.isEmpty ? Theme.lcdText.opacity(0.3) : Theme.lcdText)
                 .lineLimit(1)
                 // a cut name shows whole (not a help tip: always on)
                 .oxoTruncationTooltip(text, size: 11, monospaced: true, optional: false)
         }
-            .padding(.horizontal, 5).padding(.vertical, 3)
+            .padding(.horizontal, 5 * scale).padding(.vertical, 3 * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 2).fill(selected ? theme.displayText : theme.display)
                 .overlay(RoundedRectangle(cornerRadius: 2).fill((tint ?? .clear).opacity(0.28))))
@@ -585,7 +590,7 @@ struct PatchBrowserView: View {
             // drag a patch onto another slot: move there (swap if taken); onto
             // a bank: copy (factory patches can only be copied)
             .slotDraggable(patch.isEmpty ? nil : Self.dragPrefix + "\(b):\(s)",
-                           label: String(format: "%03d:", s + 1) + patch, fill: theme.display)
+                           label: String(format: "%03d:", s + 1) + patch, fill: theme.display, scaleForDrag: scale)
             .onDrop(of: SlotDrop.types, delegate: SlotDrop(bank: b, slot: s, enabled: !readOnly, target: $dropTarget) { from in
                 model.movePatch(bank: b, from: from, to: s)
             })
@@ -682,11 +687,11 @@ private struct BankDrop: DropDelegate {
 extension View {
     /// Draggable slot (payload = "synth2-slot:bank:slot"), nothing for an empty one.
     @ViewBuilder
-    func slotDraggable(_ payload: String?, label: String, fill: Color) -> some View {
+    func slotDraggable(_ payload: String?, label: String, fill: Color, scaleForDrag: CGFloat) -> some View {
         if let payload {
             draggable(payload) {
-                Text(label).font(.system(size: 11, design: .monospaced)).foregroundColor(Theme.lcdText)
-                    .padding(.horizontal, 5).padding(.vertical, 3)
+                Text(label).oxoFont(11, design: .monospaced).foregroundColor(Theme.lcdText)
+                    .padding(.horizontal, 5 * scaleForDrag).padding(.vertical, 3 * scaleForDrag)
                     .background(RoundedRectangle(cornerRadius: 2).fill(fill))
             }
         } else {
@@ -765,6 +770,7 @@ extension View {
 struct DeleteBankDialog: View {
     @ObservedObject var model: SynthModel
     let bank: PatchBankInfo
+    @Environment(\.scale) private var scale
 
     private var detail: String {
         let patches = bank.count == 1 ? "1 patch" : "\(bank.count) patches"
@@ -779,10 +785,10 @@ struct DeleteBankDialog: View {
         ZStack {
             Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture { model.bankToDelete = nil }
             VStack(spacing: 0) {
-                Text("Delete bank?").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
-                    .frame(maxWidth: .infinity).frame(height: 22).background(Dlg.bar)
+                Text("Delete bank?").oxoFont(11, .semibold).foregroundColor(Dlg.text)
+                    .frame(maxWidth: .infinity).frame(height: 22 * scale).background(Dlg.bar)
                 VStack(alignment: .leading, spacing: 14) {
-                    Text(detail).font(.system(size: 11)).foregroundColor(Dlg.text)
+                    Text(detail).oxoFont(11).foregroundColor(Dlg.text)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         Spacer()
@@ -790,9 +796,9 @@ struct DeleteBankDialog: View {
                         button("Delete", fill: Theme.red) { model.deleteBank(id: bank.id) }
                     }
                 }
-                .padding(14)
+                .padding(14 * scale)
             }
-            .frame(width: 340)
+            .frame(width: 340 * scale)
             .background(RoundedRectangle(cornerRadius: 8).fill(Dlg.bg))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -805,8 +811,8 @@ struct DeleteBankDialog: View {
 
     private func button(_ title: String, fill: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
-                .padding(.horizontal, 12).frame(minWidth: 64).frame(height: 22)
+            Text(title).oxoFont(11).foregroundColor(Dlg.text)
+                .padding(.horizontal, 12 * scale).frame(minWidth: 64).frame(height: 22 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(fill))
                 .contentShape(Rectangle())
         }
@@ -822,6 +828,7 @@ struct DeleteBankDialog: View {
 struct DuplicatesDialog: View {
     @ObservedObject var model: SynthModel
     let groups: [DuplicateGroup]
+    @Environment(\.scale) private var scale
 
     private var copies: Int { groups.reduce(0) { $0 + $1.members.count } }
 
@@ -831,7 +838,7 @@ struct DuplicatesDialog: View {
     private var listHeight: CGFloat {
         let content = groups.reduce(CGFloat(0)) { $0 + 14 + CGFloat($1.members.count) * 23 } +
             CGFloat(max(0, groups.count - 1)) * 10 + 20
-        return min(260, max(40, content))
+        return min(260, max(40, content)) * scale
     }
 
     private var deleteHint: String {
@@ -854,19 +861,19 @@ struct DuplicatesDialog: View {
             Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture { model.duplicateGroups = nil }
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
-                    Text("Duplicate patches").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
+                    Text("Duplicate patches").oxoFont(11, .semibold).foregroundColor(Dlg.text)
                     Spacer(minLength: 4)
                     if !groups.isEmpty {
                         Text("\(copies) copies in \(groups.count) set\(groups.count == 1 ? "" : "s")")
-                            .font(.system(size: 10)).foregroundColor(Dlg.dim)
+                            .oxoFont(10).foregroundColor(Dlg.dim)
                     }
                 }
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity).frame(height: 22).background(Dlg.bar)
+                .padding(.horizontal, 8 * scale)
+                .frame(maxWidth: .infinity).frame(height: 22 * scale).background(Dlg.bar)
                 if groups.isEmpty {
                     Text("No two patches share their file bytes.")
-                        .font(.system(size: 11)).foregroundColor(Dlg.text)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                        .oxoFont(11).foregroundColor(Dlg.text)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(14 * scale)
                 } else {
                     ScrollView(showsIndicators: true) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -874,20 +881,20 @@ struct DuplicatesDialog: View {
                                 groupBlock(index: index, group: group)
                             }
                         }
-                        .padding(10)
+                        .padding(10 * scale)
                     }
                     .frame(height: listHeight)
                 }
                 HStack(spacing: 8) {
                     Text(deleteHint)
-                        .font(.system(size: 10)).foregroundColor(Dlg.dim)
+                        .oxoFont(10).foregroundColor(Dlg.dim)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     button("Close", fill: Dlg.bar) { model.duplicateGroups = nil }
                 }
-                .padding(10)
+                .padding(10 * scale)
             }
-            .frame(width: 400)
+            .frame(width: 400 * scale)
             .background(RoundedRectangle(cornerRadius: 8).fill(Dlg.bg))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -899,18 +906,18 @@ struct DuplicatesDialog: View {
     }
 
     private func groupBlock(index: Int, group: DuplicateGroup) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3 * scale) {
             Text("Set \(index + 1) · \(group.members.count) identical files")
-                .font(.system(size: 10, weight: .semibold)).foregroundColor(Dlg.dim)
+                .oxoFont(10, .semibold).foregroundColor(Dlg.dim)
             ForEach(group.members, id: \.self) { member in
                 HStack(spacing: 6) {
                     Text(String(format: "%03d", member.slot + 1))
-                        .font(.system(size: 10, design: .monospaced)).foregroundColor(Dlg.dim)
-                        .frame(width: 24, alignment: .leading)
-                    Text(patchName(member)).font(.system(size: 11)).foregroundColor(Dlg.text)
+                        .oxoFont(10, design: .monospaced).foregroundColor(Dlg.dim)
+                        .frame(width: 24 * scale, alignment: .leading)
+                    Text(patchName(member)).oxoFont(11).foregroundColor(Dlg.text)
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 4)
-                    Text(bankName(member.bank)).font(.system(size: 10)).foregroundColor(Dlg.dim)
+                    Text(bankName(member.bank)).oxoFont(10).foregroundColor(Dlg.dim)
                         .lineLimit(1).truncationMode(.head).frame(maxWidth: 110, alignment: .trailing)
                     button("Load", fill: Dlg.field, width: 44) {
                         model.duplicateGroups = nil
@@ -920,7 +927,7 @@ struct DuplicatesDialog: View {
                         model.deleteDuplicate(bank: member.bank, slot: member.slot)
                     }
                 }
-                .padding(.horizontal, 6).frame(height: 20)
+                .padding(.horizontal, 6 * scale).frame(height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field.opacity(0.6)))
             }
         }
@@ -929,8 +936,8 @@ struct DuplicatesDialog: View {
     private func button(_ title: String, fill: Color, width: CGFloat = 64,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
-                .padding(.horizontal, 10).frame(minWidth: width).frame(height: 20)
+            Text(title).oxoFont(11).foregroundColor(Dlg.text)
+                .padding(.horizontal, 10 * scale).frame(minWidth: width).frame(height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(fill))
                 .contentShape(Rectangle())
         }
@@ -950,6 +957,7 @@ struct TagDialog: View {
 
     @State private var newTag = ""
     @FocusState private var adding: Bool
+    @Environment(\.scale) private var scale
 
     private var info: PatchBankInfo? { bank < model.banks.count ? model.banks[bank] : nil }
     private var title: String {
@@ -970,10 +978,10 @@ struct TagDialog: View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture { model.tagEdit = nil }
             VStack(spacing: 0) {
-                Text("Category and tags").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
-                    .frame(maxWidth: .infinity).frame(height: 22).background(Dlg.bar)
+                Text("Category and tags").oxoFont(11, .semibold).foregroundColor(Dlg.text)
+                    .frame(maxWidth: .infinity).frame(height: 22 * scale).background(Dlg.bar)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(title).font(.system(size: 10, design: .monospaced)).foregroundColor(Dlg.dim)
+                    Text(title).oxoFont(10, design: .monospaced).foregroundColor(Dlg.dim)
                         .lineLimit(1).oxoTruncationTooltip(title, size: 10, monospaced: true, optional: false)
 
                     // the add field first: at the top of the dialog, clear of
@@ -981,10 +989,10 @@ struct TagDialog: View {
                     HStack(spacing: 6) {
                         TextField("add a tag", text: $newTag)
                             .textFieldStyle(.plain).focused($adding)
-                            .font(.system(size: 11))
+                            .oxoFont(11)
                             .foregroundColor(Dlg.text)
                             .onSubmit { commitTag() }
-                            .padding(.horizontal, 6).frame(height: 20)
+                            .padding(.horizontal, 6 * scale).frame(height: 20 * scale)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
                         button("Add", fill: Dlg.accent, width: 44) { commitTag() }
                             .disabled(tags.count >= 12)
@@ -1005,7 +1013,7 @@ struct TagDialog: View {
 
                     Toggle(isOn: Binding(get: { mark?.favourite ?? false },
                                          set: { _ in model.toggleFavourite(bank: bank, slot: slot) })) {
-                        Text("Starred").font(.system(size: 11)).foregroundColor(Dlg.text)
+                        Text("Starred").oxoFont(11).foregroundColor(Dlg.text)
                     }
                     .toggleStyle(.switch)
 
@@ -1014,14 +1022,14 @@ struct TagDialog: View {
                         button("Done", fill: Dlg.bar) { model.tagEdit = nil }
                     }
                 }
-                .padding(14)
+                .padding(14 * scale)
             }
-            .frame(width: 380)
+            .frame(width: 380 * scale)
             .background(RoundedRectangle(cornerRadius: 8).fill(Dlg.bg))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
-            .padding(.top, 24)
+            .padding(.top, 24 * scale)
             #if os(macOS)
             .background(WheelShield())
             #endif
@@ -1032,11 +1040,11 @@ struct TagDialog: View {
     /// consistent, which is what makes them portable between setups).
     private var suggestionRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 3) {
+            HStack(spacing: 3 * scale) {
                 ForEach(Array(suggestions.prefix(32)), id: \.self) { tag in
                     Button { model.addTag(tag, bank: bank, slot: slot) } label: {
-                        Text(tag).font(.system(size: 10)).foregroundColor(Dlg.dim)
-                            .padding(.horizontal, 5).frame(height: 18)
+                        Text(tag).oxoFont(10).foregroundColor(Dlg.dim)
+                            .padding(.horizontal, 5 * scale).frame(height: 18 * scale)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
                             .contentShape(Rectangle())
                     }
@@ -1048,18 +1056,18 @@ struct TagDialog: View {
     }
 
     private var tagList: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3 * scale) {
             ForEach(tags, id: \.self) { tag in
                 HStack(spacing: 6) {
-                    Text(tag).font(.system(size: 11)).foregroundColor(Dlg.text)
+                    Text(tag).oxoFont(11).foregroundColor(Dlg.text)
                     Spacer(minLength: 4)
                     Button { model.removeTag(tag, bank: bank, slot: slot) } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10)).foregroundColor(Dlg.dim)
+                            .oxoFont(10).foregroundColor(Dlg.dim)
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 6).frame(height: 20)
+                .padding(.horizontal, 6 * scale).frame(height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
             }
         }
@@ -1070,17 +1078,19 @@ struct TagDialog: View {
     private func picker(_ label: String, value: String, options: [String],
                         choose: @escaping (String) -> Void) -> some View {
         HStack(spacing: 8) {
-            Text(label).font(.system(size: 11)).foregroundColor(Dlg.text)
+            Text(label).oxoFont(11).foregroundColor(Dlg.text)
             Menu {
                 ForEach(options, id: \.self) { option in
                     Button(option) { choose(option) }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text(value).font(.system(size: 11)).foregroundColor(Dlg.text)
-                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundColor(Dlg.dim)
+                // Inline fonts, not .oxoFont: see MenuDisplay.
+                HStack(spacing: 4 * scale) {
+                    Text(value).font(.system(size: 11 * scale)).foregroundColor(Dlg.text)
+                    Image(systemName: "chevron.down").font(.system(size: 7 * scale, weight: .bold))
+                        .foregroundColor(Dlg.dim)
                 }
-                .padding(.horizontal, 6).frame(height: 20)
+                .padding(.horizontal, 6 * scale).frame(height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -1097,8 +1107,8 @@ struct TagDialog: View {
     private func button(_ title: String, fill: Color, width: CGFloat = 64,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
-                .padding(.horizontal, 10).frame(minWidth: width).frame(height: 20)
+            Text(title).oxoFont(11).foregroundColor(Dlg.text)
+                .padding(.horizontal, 10 * scale).frame(minWidth: width).frame(height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(fill))
                 .contentShape(Rectangle())
         }
