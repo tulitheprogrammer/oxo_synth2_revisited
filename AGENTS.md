@@ -473,6 +473,14 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   a Synth1 `zipbank/` folder merges into its parent, loose .sy1 →
   "Imported" bank's next free slots; never clobbers ("Bank 2"). No export
   (Finder). Sessions store the patch, never a bank ref.
+  A PICKED FOLDER LANDS BESIDE `User`, at the library ROOT, named after
+  the folder (or "… 2" when taken) - it does NOT merge into `User`, and
+  a Synth1 bank pack (a folder holding `Dark/`, `zipbank/`, …) therefore
+  arrives as a CONTAINER whose sub-folders are the banks
+  (`"goldgreen / Goldbank"`). This is the tested contract
+  (`ImportCopiesFoldersExtractsZips`), so "it landed next to User"
+  is by design, not a bug; the notice names the destination. Moving it
+  into `User` afterwards in Finder is what produces the nested look.
   TWO PICKERS on both platforms: folders only (`canChooseFiles = false`,
   `[.folder]`) and files only (`[.zip, .sy1]`). One mixed panel made
   macOS open a picked folder's contents instead of picking it.
@@ -601,6 +609,17 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
     `setPatchFavourite`, `addPatchTag` / `removePatchTag` (the patch's
     location = bank id + slot, like `copyPatch`), `exportTags` /
     `importTags` (int32 results) and `tagVocabulary` (one per line).
+  - THE PAYLOAD'S TYPES ARE A CONTRACT (`Json()`, tests
+    `PatchLibraryTagsTests.cpp`): booleans must be JSON `true` / `false`,
+    never `1` / `0`. Swift decodes the whole document with `JSONDecoder`,
+    and one wrong type anywhere throws, so the browser shows its empty
+    state over a library that is on disk and scanned correctly. That is a
+    real bug this encoding had once (`favs` as numbers vs `[Bool]`), and
+    the snapshot tool's mock emits booleans, so a rendering cannot catch
+    it - only the engine test can. `favs` also stays decodable from
+    numbers and from a missing key (an old payload still loads), and a
+    decode error now surfaces as `libraryError` (flashed + shown in the
+    empty state) instead of blanking the browser silently.
 - COLOURS (`PatchManager::SetPatchColor`, hook `setPatchColor`, tests
   `PatchColorReadsFromTheFileAndRoundTrips`): Synth1's per-patch colour
   lives in the patch's OWN `color=` line (line 2, next to `ver=`), so it is
