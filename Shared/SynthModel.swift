@@ -99,6 +99,9 @@ public protocol SynthHost: AnyObject {
     /// "" = never set. Re-read when `patchSerial` bumps (session restore).
     var themeText: String { get }
     func setThemeText(_ text: String)
+    /// Menu > Program change: MIDI program changes played (true) or
+    /// ignored; a per-user preference, saved by the wrapper.
+    var programChange: Bool { get set }
 }
 
 /// The voice grid's feed, apart from SynthModel so a 30 Hz change only
@@ -375,6 +378,14 @@ final class SynthModel: ObservableObject {
     @Published var showLogoMenu = false
     /// Effect type pick list (a click on its display; Synth1's 2 x 5 menu).
     @Published var showEffectMenu = false
+    /// Menu > Program change (checkmark): MIDI program changes played.
+    @Published var programChange = false {
+        didSet {
+            guard programChange != oldValue else { return }
+            host.programChange = programChange
+            flash(programChange ? "program change: on" : "program change: off")
+        }
+    }
     /// Menu > Check for updates: the dialog's state, nil = closed.
     @Published var update: UpdateCheck.State?
     private var updateRequest = 0
@@ -409,6 +420,7 @@ final class SynthModel: ObservableObject {
         values = (0..<Self.hostParamCount).map { host.value($0) }
         learnTable = (0..<Self.paramCount).map { host.midiCC($0) }
         patchName = host.patchName
+        programChange = host.programChange
         serial = host.patchSerial
         palette = ThemePalette(stateText: host.themeText) ?? ThemeStore.shared.startPalette()
         host.setThemeText(palette.stateText)
@@ -858,6 +870,31 @@ final class SynthModel: ObservableObject {
         return true
     }
 
+    /// The bank the write dialog proposes for a patch out of a read-only bank
+    /// (EngineCore kUserBankName: a new library's first bank).
+    static let userBankName = "User"
+    /// Slots per bank (EngineCore kBankSlots).
+    static let bankSlots = 128
+    static let bankFullMessage = "Bank is full (128 patches): cannot add a patch"
+
+    /// The library's own "User" bank, nil when the user deleted it.
+    var userBank: Int? {
+        banks.firstIndex { !$0.readOnly && $0.name == Self.userBankName }
+    }
+
+    /// Write into a bank that does not exist yet (the write dialog's
+    /// proposed "User" bank): the folder is made by the write, not before.
+    @discardableResult
+    func write(newBank bankName: String, slot: Int, name: String) -> Bool {
+        let i = host.newBank(bankName)
+        loadLibrary()
+        guard i >= 0, i < banks.count else {
+            flash("write failed")
+            return false
+        }
+        return write(bank: i, slot: slot, name: name)
+    }
+
     /// Alt-click on write: the current sound straight back into the loaded
     /// program (same name), no dialog. False = no loaded program, or it is
     /// in the read-only factory bank.
@@ -928,7 +965,7 @@ final class SynthModel: ObservableObject {
         loadLibrary()
         switch s {
         case 0...: flash(String(format: "copied to %@ %03d", target, s + 1), seconds: 3)
-        case -1: flash("Bank is full (128 patches): cannot add a patch", seconds: 5)
+        case -1: flash(Self.bankFullMessage, seconds: 5)
         default: flash("copy failed")
         }
     }

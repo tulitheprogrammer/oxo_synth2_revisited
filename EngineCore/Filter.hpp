@@ -7,12 +7,12 @@
 //    TWICE per sample with the input held. f = 2 sin(pi fc / (2 fs)),
 //    fc = 16.7 Hz * 2^(c / 12.624) (c clamped at 125), damping d = 1 - r,
 //    input gain g = 1 - 0.7 r (r = res / 127). Fits within ~0.1-0.3 dB.
-//    Followed by a level-riding limiter (AGC: peak follower 1.2 ms attack /
-//    0.2 s release, gain (T / e)^0.883 above T = 1.427), which is what keeps
-//    high resonance bounded with < 1 % THD.
 //  LP24 (type 1): 4 bilinear one-pole stages, global feedback through a one-
 //    sample delay, k = (0.0297 res - 0.076) * comp[cutoff], no input gain
-//    compensation (passband = 1 / (1 + k), Moog-like).
+//    compensation (passband = 1 / (1 + k), Moog-like). An AGC rides the
+//    feedback (in-loop, bounds the self-oscillation).
+//  Both are followed by the same OUTPUT LIMITER (Limit): a level-riding gain
+//    on an |y| follower, soft knee (tools/s1ref/measure_filter_limiter.py).
 //  LPDL (type 4): fitted linear diode ladder (see SetDiode) with a measured
 //    input saturator (its drive falls with resonance) and a saturating
 //    feedback (bounds the resonance: the peak drops 15 dB from small to full
@@ -22,6 +22,7 @@
 // signals are normalized (oscillator full scale = 1).
 
 #include "MeasuredTables.hpp"
+#include "Simd.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -51,17 +52,33 @@ public:
     }
 
     // SVF f (cutoff clamped at 125), ladder one-pole a and feedback comp.
-    void Lookup(double knob, double &svfF, double &ladderA, double &ladderComp) const {
-        const double x = std::clamp(knob, 0.0, 127.0) * kSteps;
-        const int i = std::min(int(x), kSize - 2);
-        const double t = x - i;
-        svfF = svfF_[i] + (svfF_[i + 1] - svfF_[i]) * t;
-        ladderA = ladderA_[i] + (ladderA_[i + 1] - ladderA_[i]) * t;
-        ladderComp = comp_[i] + (comp_[i + 1] - comp_[i]) * t;
+    double SvfF(double knob) const { return At(svfF_, knob); }
+    // the output limiter's gain for its envelope e (> 0), (1 + (e / T)^k)^(-p / k)
+    static constexpr double kLimitMax = 64.0, kLimitSteps = 32.0;
+    double LimitGain(double e) const {
+        const double x = std::min(e, kLimitMax) * kLimitSteps;
+        const int i = std::min(int(x), int(limit_.size()) - 2);
+        return limit_[i] + (limit_[i + 1] - limit_[i]) * (x - i);
+    }
+    void Ladder(double knob, double &ladderA, double &ladderComp) const {
+        ladderA = At(ladderA_, knob);
+        ladderComp = At(comp_, knob);
     }
 
 private:
-    explicit FilterTables(double sr) : sampleRate_(sr), svfF_(kSize), ladderA_(kSize), comp_(kSize) {
+    static double At(const std::vector<double> &table, double knob) {
+        const double x = std::clamp(knob, 0.0, 127.0) * kSteps;
+        const int i = std::min(int(x), kSize - 2);
+        const double t = x - i;
+        return table[i] + (table[i + 1] - table[i]) * t;
+    }
+
+    explicit FilterTables(double sr)
+        : sampleRate_(sr), svfF_(kSize), ladderA_(kSize), comp_(kSize), limit_(size_t(kLimitMax * kLimitSteps) + 2) {
+        // (fitted, measure_filter_limiter.py) knee T, exponent p, sharpness k
+        static constexpr double kT = 1.038, kP = 0.856, kK = 11.54;
+        for (size_t i = 0; i < limit_.size(); ++i)
+            limit_[i] = std::pow(1.0 + std::pow(i / kLimitSteps / kT, kK), -kP / kK);
         for (int k = 0; k < kSize; ++k) {
             const double knob = std::min(double(k) / kSteps, 127.0);
             const double hz = 16.7 * std::exp2(std::min(knob, 125.0) / 12.624);
@@ -77,7 +94,7 @@ private:
     }
 
     double sampleRate_;
-    std::vector<double> svfF_, ladderA_, comp_;
+    std::vector<double> svfF_, ladderA_, comp_, limit_;
 };
 
 class VoiceFilter {
@@ -87,6 +104,8 @@ public:
         tables_ = FilterTables::ForSampleRate(sampleRate);
         agcAttack_ = 1.0 - std::exp(-1.0 / (0.0012 * sampleRate));
         agcRelease_ = 1.0 - std::exp(-1.0 / (0.2017 * sampleRate));
+        limitAttack_ = 1.0 - std::exp(-1.0 / (0.003714 * sampleRate));
+        limitRelease_ = 1.0 - std::exp(-1.0 / (0.00689 * sampleRate));
     }
 
     void Reset() {
@@ -94,41 +113,70 @@ public:
         for (double &s : stage_) s = 0;
         fb_ = 0;
         agcEnv_ = 0;
+        limitEnv_ = 0;
         ladderGain_ = 1;
         for (double &s : diode_) s = 0;
         diodeX_ = 0;
     }
 
+    // The three filter structures: the voice loop is compiled per kind
+    // (Set<Kind> + Process<Kind>, no dispatch per sample).
+    enum Kind { kSvf, kLadder, kDiode };
+    static constexpr Kind KindOf(int type) { return type == 4 ? kDiode : type == 1 ? kLadder : kSvf; }
+
     // type 0..4, cutoff in knob units (may be fractional / out of range), res 0..127.
-    void SetParams(int type, double cutoffKnob, int res) {
-        type_ = type;
+    OXO_INLINE void SetParams(int type, double cutoffKnob, int res) {
         if (type == 4) return SetDiode(cutoffKnob, res);
-        const double r = res / 127.0;
+        if (type == 1) return SetLadder(cutoffKnob, res);
+        SetSvf(type, cutoffKnob, res);
+    }
+    OXO_INLINE double Process(double x) { return type_ == 4 ? ProcessDiode(x) : type_ == 1 ? ProcessLadder(x) : ProcessSvf(x); }
+
+    // LP12 / HP12 / BP12 (type 0 / 2 / 3)
+    OXO_INLINE void SetSvf(int type, double cutoffKnob, int res) {
+        type_ = type;
+        svfF_ = tables_->SvfF(cutoffKnob);
+        if (res != svfRes_) {
+            const double r = res / 127.0;
+            svfRes_ = res;
+            svfD_ = std::max(1.0 - r, 0.0);
+            svfG_ = 1.0 - 0.7 * r;
+        }
+    }
+    // LP24
+    OXO_INLINE void SetLadder(double cutoffKnob, int res) {
+        type_ = 1;
         double comp;
-        tables_->Lookup(cutoffKnob, svfF_, ladderA_, comp);
+        tables_->Ladder(cutoffKnob, ladderA_, comp);
         ladderK_ = std::max(0.0, 0.0297 * res - 0.076) * comp;
-        svfD_ = std::max(1.0 - r, 0.0);
-        svfG_ = 1.0 - 0.7 * r;
+    }
+    // LPDL
+    void SetDiode(double cutoffKnob, int res) {
+        type_ = 4;
+        SetDiodeCoefficients(cutoffKnob, res);
     }
 
-    double Process(double x) {
-        if (type_ == 4) return Diode(x);
-        if (type_ == 1) {
-            // The limiter rides the FEEDBACK here (in-loop), which is what
-            // bounds the measured self-oscillation at res 127 (~1.8 FS).
-            double u = x - ladderK_ * ladderGain_ * fb_;
-            for (double &s : stage_) {
-                const double v = (u - s) * ladderA_;
-                const double y = v + s;
-                s = y + v;
-                u = y;
-            }
-            fb_ = u;
-            const double a = std::fabs(u);
-            agcEnv_ += (a > agcEnv_ ? agcAttack_ : agcRelease_) * (a - agcEnv_);
-            ladderGain_ = agcEnv_ > kLadderAgcThreshold ? std::pow(kLadderAgcThreshold / agcEnv_, kAgcExponent) : 1.0;
-            return u;
+    double ProcessDiode(double x) { return Diode(x); }
+    OXO_INLINE double ProcessLadder(double x) {
+        // The AGC rides the FEEDBACK here (in-loop): it bounds the
+        // self-oscillation, the output limiter takes it to the measured
+        // ~1.72 FS at res 127 (cutoff 56..96, less above)
+        double u = x - ladderK_ * ladderGain_ * fb_;
+        for (double &s : stage_) {
+            const double v = (u - s) * ladderA_;
+            const double y = v + s;
+            s = y + v;
+            u = y;
         }
+        fb_ = u;
+        const double a = std::fabs(u);
+        agcEnv_ += (a > agcEnv_ ? agcAttack_ : agcRelease_) * (a - agcEnv_);
+#ifndef OXO_FILTER_LINEAR
+        ladderGain_ = agcEnv_ > kLadderAgcThreshold ? std::pow(kLadderAgcThreshold / agcEnv_, kAgcExponent) : 1.0;
+#endif
+        return Limit(u);
+    }
+    OXO_INLINE double ProcessSvf(double x) {
         const double in = svfG_ * x;
         double high = 0;
         for (int i = 0; i < 2; ++i) {
@@ -136,13 +184,26 @@ public:
             high = in - low_ - svfD_ * band_;
             band_ += svfF_ * high;
         }
-        const double y = type_ == 0 ? low_ : type_ == 2 ? high : band_;
-        const double a = std::fabs(y);
-        agcEnv_ += (a > agcEnv_ ? agcAttack_ : agcRelease_) * (a - agcEnv_);
-        return agcEnv_ > kAgcThreshold ? y * std::pow(kAgcThreshold / agcEnv_, kAgcExponent) : y;
+        return Limit(type_ == 0 ? low_ : type_ == 2 ? high : band_);
     }
 
 private:
+    // (measured, measure_filter_limiter.py) the SVF's and the ladder's output
+    // limiter: a gain on a follower of |y| (3.7 ms up, 6.9 ms down), soft knee
+    // (FilterTables::LimitGain). It works on the filter's output, before the
+    // saturation and the amp (filtered quietly, it does not act). Below
+    // kLimitFloor its gain is 1 to 1e-6
+    OXO_INLINE double Limit(double y) {
+#ifdef OXO_FILTER_LINEAR // measurement builds (measure_filter_limiter.py)
+        return y;
+#else
+        const double a = std::fabs(y);
+        limitEnv_ += (a > limitEnv_ ? limitAttack_ : limitRelease_) * (a - limitEnv_);
+        return limitEnv_ > kLimitFloor ? y * tables_->LimitGain(limitEnv_) : y;
+#endif
+    }
+    static constexpr double kLimitFloor = 0.39;
+
     // LPDL (fitted, tools/s1ref/fit_lpdl.py): linear 303-style diode ladder,
     // dy1 = w(-2 y1 + y2 + u), dy2 = w(y1 - 2 y2 + y3), dy3 = w(y2 - 2 y3 +
     // y4), dy4 = w(y3 - y4), u = x - k (y4 - z), dz = 2 pi 100 (y4 - z) (the
@@ -151,7 +212,7 @@ private:
     // The feedback saturation (gain G <= 1 on k) is applied as the explicit
     // extra input w k (1 - G) f from the state before the step, so the
     // linear (G = 1) solve stays implicit and precomputed.
-    void SetDiode(double cutoffKnob, int res) {
+    void SetDiodeCoefficients(double cutoffKnob, int res) {
         // coefficients follow the cutoff in 1/8-knob steps (a 5x5 inversion each)
         if (res == diodeRes_ && std::fabs(cutoffKnob - diodeCut_) < 0.125) return;
         diodeRes_ = res, diodeCut_ = cutoffKnob;
@@ -241,25 +302,28 @@ private:
     // h3 / compression vs level): input x * kLpdlInputRef / g through
     // tanh(kLpdlDrive u) / kLpdlDrive, feedback through tanh(c k f) / c
     static constexpr double kLpdlInputRef = 1.3, kLpdlDrive = 1.0, kLpdlFeedbackSat = 2.0;
-    static constexpr double kAgcThreshold = 1.427;
     static constexpr double kAgcExponent = 0.883;
-    static constexpr double kLadderAgcThreshold = 1.6; // ear/plot-tuned vs res 112..127 step responses
+    // (fitted, measure_filter_limiter.py) the self-oscillation's level through
+    // the output limiter: 1.72 FS at res 127, cutoff 56..96, as the original
+    static constexpr double kLadderAgcThreshold = 5.5;
 
     double sampleRate_ = 44100;
     std::shared_ptr<const FilterTables> tables_;
     int type_ = 1;
     double svfF_ = 0.1, svfD_ = 1, svfG_ = 1;
+    int svfRes_ = 0; // the res svfD_ / svfG_ hold
     double low_ = 0, band_ = 0;
     double ladderA_ = 0.5, ladderK_ = 0, ladderGain_ = 1;
     double stage_[4] = {0, 0, 0, 0};
     double fb_ = 0;
     double agcAttack_ = 0.1, agcRelease_ = 0.001, agcEnv_ = 0;
+    double limitAttack_ = 0.1, limitRelease_ = 0.1, limitEnv_ = 0;
     double diode_[5] = {}, diodeX_ = 0, diodeG_ = 1, diodeW_ = -1, diodeK_ = -1, diodeB_ = 0, diodeCut_ = -1e9;
     int diodeRes_ = -1;
     double diodeN_[5][5] = {}, diodeMi_[5][5] = {};
 };
 
 // (measured) filter saturation, after the filter: y = (1 + a) x / (1 + a |x|).
-inline double Saturate(double x, double a) { return a > 0 ? (1 + a) * x / (1 + a * std::fabs(x)) : x; }
+OXO_INLINE double Saturate(double x, double a) { return a > 0 ? (1 + a) * x / (1 + a * std::fabs(x)) : x; }
 
 } // namespace oxo::s2

@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/images/synth2_preview.png" width="400" alt="The Synth2 panel"></p>
+<p align="center"><img src="docs/images/synth2_preview.jpg" width="400" alt="The Synth2 panel"></p>
 
 # Synth2
 
@@ -20,14 +20,16 @@ Synth2 aims to keep those sounds playable on modern computers. Open source, so t
 
 Note: the original Synth1 was studied only through its audio output. The binary was never disassembled or decompiled (see the clean-room rule in [AGENTS.md](AGENTS.md#rules)).
 
-Formats: macOS VST3 + AUv2, iPad AUv3. Currently working on the Windows version. Linux ports are welcome: if you're a developer on Linux, fork the repository and open a pull request.
+Formats: macOS VST3 + AUv2, iPad AUv3, Windows VST3 (x64).
 
 ## Download
 
 Official builds are published on the Oxo Music website:
 
 - macOS 14+ (VST3 + AU, signed and notarized): <https://oxo-music.com/products/oxo_synth2>
+- Windows 10+ x64 (VST3): <https://oxo-music.com/products/oxo_synth2> (thanks to [sl23](https://github.com/sl2365) for the contribution)
 - iPad (AUv3): <https://apps.apple.com/us/app/oxo-synth2/id6829692180>
+- Linux: not available yet. Ports are welcome: if you're interested, open an issue to signal you're working on it, fork the repository and open a pull request. Please keep it a 1:1 port of the macOS / Windows versions (no new features).
 
 ## Relationship to Synth1
 
@@ -47,7 +49,8 @@ loaded for compatibility only; no Synth1 banks are distributed.
 
 ## Building
 
-Requirements: a Mac with a recent Xcode (developed with Xcode 27).
+Get the sources with their submodules (Steinberg's VST3 SDK, Apple's
+AudioUnitSDK):
 
 ```sh
 git clone --recursive https://github.com/chab/oxo_synth2.git
@@ -61,7 +64,7 @@ A local build keeps the official identity: it replaces an installed Oxo Synth2
 
 ### macOS (VST3 + AUv2)
 
-Also needs CMake 3.25+.
+Needs a Mac with a recent Xcode (developed with Xcode 27) and CMake 3.25+.
 
 ```sh
 ./build_vst3.sh   # builds and installs the VST3 + AUv2 into ~/Library/Audio/Plug-Ins
@@ -69,10 +72,10 @@ Also needs CMake 3.25+.
 
 ### iPad (AUv3)
 
-Open and build `OxoSynth2.xcodeproj` in Xcode. To run it on a device, Xcode
-must sign it with **your** Apple developer team (`Identity.xcconfig` holds the
-official one). Don't edit that file: create `Identity.local.xcconfig` next to
-it with one line:
+Needs a Mac with a recent Xcode. Open and build `OxoSynth2.xcodeproj` in
+Xcode. To run it on a device, Xcode must sign it with **your** Apple developer
+team (`Identity.xcconfig` holds the official one). Don't edit that file:
+create `Identity.local.xcconfig` next to it with one line:
 
 ```
 DEVELOPMENT_TEAM = <your Team ID>
@@ -82,16 +85,84 @@ Your Team ID is shown at developer.apple.com > Account > Membership details.
 The file is gitignored, so it stays on your machine.
 
 
-### Windows (VST3)
+### Windows (VST3, x64)
 
-5 november 2026: In progress.
+Needs Windows 10 / 11 x64, Git, and Visual Studio 2022 or later (Community or
+Build Tools) with the "Desktop development with C++" workload, which includes
+CMake, plus two individual components from the Visual Studio Installer: "C++
+Clang Compiler for Windows" and "MSBuild support for LLVM (clang-cl) toolset".
 
+Note: the build uses clang-cl, which produces faster code than MSVC for this project.
+
+```bat
+build_windows.bat   # builds Windows_Build\build\VST3\Release\OxoSynth2.vst3 (does not install it)
+```
+
+To test the plugin, close the DAW and copy the bundle into the system VST3
+folder from a Command Prompt **run as administrator** (it starts in
+`System32`, hence the `cd`; the `rmdir` removes the previous copy so no stale
+file stays in the bundle):
+
+```bat
+cd /d C:\path\to\oxo_synth2
+if exist "%CommonProgramFiles%\VST3\OxoSynth2.vst3" rmdir /S /Q "%CommonProgramFiles%\VST3\OxoSynth2.vst3"
+xcopy Windows_Build\build\VST3\Release\OxoSynth2.vst3 "%CommonProgramFiles%\VST3\OxoSynth2.vst3\" /E /I /Y
+```
+
+#### Where the Windows version keeps your files
+
+- Settings and themes: `%APPDATA%\Oxo Music\Oxo Synth2\`. Themes are saved in
+  `themes.json` (the same format as on the Mac); theme files dropped into a
+  `Themes\` folder next to it (`*.json`, one theme each, named after the
+  file) are listed too.
+- Bank library: `Documents\Oxo Music\Oxo Synth2\`.
+- Portable mode: create a `Synth2_Data` folder **next to the
+  `OxoSynth2.vst3` bundle** (in a folder you can write to). When it exists,
+  the plugin keeps everything there instead: settings, `themes.json` and
+  `Themes\` in it, banks in `Synth2_Data\Presets\`. Nothing is converted or
+  moved: the usual folders stay as they are and are used again if
+  `Synth2_Data` goes away. Restart the host after adding or removing it.
 
 ### Tests
 
 ```sh
 make -C EngineCoreTests test
 ```
+
+## Preparing installers
+
+Both scripts read the product name, IDs and version from `Identity.xcconfig`
+and write into `dist/` (gitignored).
+
+### macOS (.pkg in a .dmg)
+
+```sh
+tools/prepare_mac_installer   # dist/mac/OxoSynth2-<version>-<build>-macOS.dmg
+```
+
+One package with Audio Unit / VST3 checkboxes, installing into
+`/Library/Audio/Plug-Ins`. Signing and notarization need a Developer ID:
+set `OXO_SIGN_ID_APP`, `OXO_SIGN_ID_INSTALLER` and `OXO_NOTARY_PROFILE`
+(`xcrun notarytool store-credentials`). `--skip-notarize` makes a local test
+build (Gatekeeper refuses it once downloaded), `--skip-build` reuses the last
+build. Details at the top of the script.
+
+### Windows (Inno Setup .exe in a .zip)
+
+Needs, on top of the build requirements,
+[Inno Setup](https://jrsoftware.org/isinfo.php) 6.3+
+(`winget install JRSoftware.InnoSetup`).
+
+```bat
+tools\prepare_win_installer.bat   # dist\win\OxoSynth2-<version>-<build>-Windows-x64.exe + .zip
+```
+
+Builds the release with clang-cl (static runtime: no VC++ redistributable
+needed), validates it, and packs the installer (puts the plugin in
+`C:\Program Files\Common Files\VST3`) and the `.zip` (installer, `README.pdf`,
+raw bundle). Authenticode signing is optional (`OXO_WIN_SIGN_SHA1` or
+`OXO_WIN_SIGN_PFX`, see the top of the script); unsigned, SmartScreen warns
+on first run. `--help` lists the options.
 
 ## Repository layout
 
@@ -101,6 +172,7 @@ make -C EngineCoreTests test
 | `EditorCore/` | Editor services shared by the VST3 and the AUv3 (C bridge to the UI, state, per-user files) |
 | `Shared/` | The SwiftUI panel (mac and iPad) |
 | `OxoSynth2VST3/` | VST3 plugin (+ the SDK's AUv2 wrapper), CMake |
+| `Windows_Build/` | Windows VST3: CMake project, native Win32 / GDI+ editor, vendored zlib |
 | `OxoSynth2.xcodeproj`, `OxoSynth2/`, `OxoSynth2AudioUnit/` | iPad app (an "open it in a host" screen) + AUv3 extension |
 | `EngineCoreTests/` | Engine unit tests |
 | `tools/s1ref/` | Black-box harness for the original Synth1 + the measurement / fitting scripts |
@@ -122,7 +194,7 @@ generated from them.
 The renders of the original Synth1 (4,270 files, 3.4 GB unpacked) are not in
 the repository:
 
-1. Download [synth2-reference.zip](https://oxo-music.com/downloads/synth2-reference.zip) (1.4 GB).
+1. Download [synth2-reference.zip](https://oxo-music.com/downloads/synth2-reference.zip) (1.5 GB).
 2. Unzip it at the repository root:
 
    ```sh
@@ -172,7 +244,7 @@ agents read it automatically. Keep it up to date as you go.
 If you ship your own builds, give them **their own identity** so they can be
 installed next to the official ones without host conflicts. Every identity lives in
 `Identity.xcconfig` (or override it in `Identity.local.xcconfig`); the Xcode
-project, CMake, `build_vst3.sh` and the mac installer all read it:
+project, CMake, `build_vst3.sh` and both installers read it:
 
 | Key | Used for |
 |---|---|

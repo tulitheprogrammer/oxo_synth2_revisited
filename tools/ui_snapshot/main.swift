@@ -1,6 +1,6 @@
 // Renders the editor with a mock host to PNG (layout eye-check without a DAW).
 //   swiftc Shared/*.swift tools/ui_snapshot/main.swift -o build/ui/snap
-//   ./build/ui/snap out.png [browser|browser-loading|loading|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank|filter|tags]
+//   ./build/ui/snap out.png [browser|browser-loading|loading|write|write-factory|write-new-user|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank|filter|tags]
 import AppKit
 import SwiftUI
 
@@ -65,16 +65,30 @@ final class MockHost: SynthHost {
                 i < patches.count ? "[" + patches[i].3.map { "\"\($0)\"" }.joined(separator: ",") + "]" : "[]"
             }.joined(separator: ",") + "]"
         }
+        /// A bank row with everything the browser decodes.
+        func bankJSON(_ name: String, _ source: String, _ patches: [(String, Int, Bool, [String])],
+                      readOnly: Bool = false) -> String {
+            #"{"name":"\#(name)","source":"\#(source)""# + (readOnly ? #","readOnly":true"# : "")
+                + #","slots":"# + slots(patches) + #","cats":"# + catsJSON(patches)
+                + #","favs":"# + favsJSON(patches) + #","tags":"# + tagsJSON(patches)
+                + #","colors":"# + colorsJSON(patches) + "}"
+        }
+        // write-factory / write-new-user: the read-only factory bank first
+        // (loaded), with / without a User bank
+        var rows: [String] = []
+        if factoryLoaded {
+            rows.append(bankJSON("Synth2 Factory", "f", [("INIT", 21, false, []), ("Brass", 6, false, [])], readOnly: true))
+        }
+        let shown = banks.filter { hasUser || $0.name != SynthModel.userBankName }
+        rows += shown.prefix(bankPrefix).map { bankJSON($0.name, $0.source, $0.patches) }
         var out = #"{"root":"/Users/me/Music/Oxo Music/Oxo Synth2","catNames":["#
         out += names.map { "\"\($0)\"" }.joined(separator: ",")
         out += #"],"tagVocab":["analog","bright","digital","fx","short","warm"],"banks":["#
-        out += banks.prefix(bankPrefix).map { bank in
-            #"{"name":"\#(bank.name)","source":"\#(bank.source)","slots":"# + slots(bank.patches)
-                + #","cats":"# + catsJSON(bank.patches) + #","favs":"# + favsJSON(bank.patches)
-                + #","tags":"# + tagsJSON(bank.patches) + #","colors":"# + colorsJSON(bank.patches) + "}"
-        }.joined(separator: ",") + "]}"
+        out += rows.joined(separator: ",") + "]}"
         return out
     }
+    var factoryLoaded = false
+    var hasUser = true
     func rescanLibrary() {}
     func startLibraryScan() {}
     var libraryRevision = 1
@@ -117,6 +131,7 @@ final class MockHost: SynthHost {
     func allNotesOff() {}
     var themeText = ""
     func setThemeText(_ text: String) { themeText = text }
+    var programChange = false
 }
 
 let args = CommandLine.arguments
@@ -124,6 +139,8 @@ let mock = MockHost()
 // loading: first browser open, no list yet; browser-loading: a rescan over a shown list
 let mode = args.count > 2 ? args[2] : ""
 if mode == "loading" { mock.libraryRevision = 0 }
+mock.factoryLoaded = mode == "write-factory" || mode == "write-new-user"
+mock.hasUser = mode != "write-new-user"
 mock.libraryScanning = mode == "loading" || mode == "browser-loading"
 // browser-loading: a scan half way through, 2 of 3 banks already usable
 if mode == "browser-loading" {
@@ -154,7 +171,7 @@ if args.count > 2 {
     } else if args[2] == "learn" {
         model.toggleLearn()
         model.learnSelect(21)
-    } else if args[2] == "write" {
+    } else if args[2] == "write" || args[2] == "write-factory" || args[2] == "write-new-user" {
         model.load(bank: 0, slot: 0)
         model.openBrowser(write: true)
     } else {

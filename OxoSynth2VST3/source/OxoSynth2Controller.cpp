@@ -8,10 +8,14 @@
 #include "base/source/fstring.h"
 #include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/base/ustring.h"
+#include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivstmessage.h"
+#include "public.sdk/source/vst/utility/stringconvert.h"
 
 #if SMTG_OS_MACOS
 #include "OxoSynth2EditorView.h"
+#elif SMTG_OS_WINDOWS
+#include "WindowsEditor.hpp"
 #endif
 
 #include <cmath>
@@ -24,6 +28,16 @@ using namespace Steinberg;
 namespace fs = std::filesystem;
 
 namespace oxo {
+
+namespace {
+// UTF-8 -> a host string, cut to fit.
+void ToString128(const std::string &utf8, Vst::String128 out) {
+    const std::u16string s = Vst::StringConvert::convert(utf8);
+    const size_t n = std::min<size_t>(s.size(), 127);
+    std::copy_n(s.begin(), n, out);
+    out[n] = 0;
+}
+} // namespace
 
 tresult PLUGIN_API OxoSynth2Controller::initialize(FUnknown *context) {
     tresult result = EditControllerEx1::initialize(context);
@@ -75,7 +89,29 @@ tresult PLUGIN_API OxoSynth2Controller::initialize(FUnknown *context) {
         UString(token.title, str16BufferSize(Vst::String128)).fromAscii(name);
         parameters.addParameter(token);
     }
+    token.id = kProgramTokenParamId;
+    UString(token.title, str16BufferSize(Vst::String128)).fromAscii("Program Changed");
+    parameters.addParameter(token);
+    // MIDI program change (see OxoSynth2CIDs.h): names from ProgramBankChanged.
+    auto *programs = new Vst::ProgramList(STR16("Program"), kProgramParamId, Vst::kRootUnitId);
+    const s2::ProgramBankPatches empty;
+    for (int s = 0; s < s2::kBankSlots; ++s) {
+        Vst::String128 name;
+        ToString128(s2::ProgramLabel(empty, s), name);
+        programs->addProgram(name);
+    }
+    addProgramList(programs);
+    Vst::Parameter *program = programs->getParameter();
+    program->getInfo().flags &= ~Vst::ParameterInfo::kCanAutomate; // like the SDK's programchange sample
+    parameters.addParameter(program);
+    Vst::UnitInfo unit{};
+    unit.id = Vst::kRootUnitId;
+    unit.parentUnitId = Vst::kNoParentUnitId;
+    unit.programListId = kProgramParamId;
+    UString(unit.name, str16BufferSize(Vst::String128)).fromAscii("Root");
+    addUnit(new Vst::Unit(unit));
     learnCc_ = storage::LoadMidiLearn();
+    programChangeOn_ = storage::LoadProgramChange(); // the processor reads it too
     ConfigureLibrary(storage::LibraryRoot(), storage::FactoryRoot(), OXO_BUILD_NUMBER);
     // A fresh instance starts on the library's first patch, like the
     // processor (hosts usually sync us with its state right after anyway).
@@ -107,6 +143,8 @@ tresult PLUGIN_API OxoSynth2Controller::setComponentState(IBStream *state) {
 IPlugView *PLUGIN_API OxoSynth2Controller::createView(FIDString name) {
 #if SMTG_OS_MACOS
     if (name && strcmp(name, Vst::ViewType::kEditor) == 0) return new OxoSynth2EditorView(this);
+#elif SMTG_OS_WINDOWS
+    if (name && strcmp(name, Vst::ViewType::kEditor) == 0) return new WindowsEditor(this);
 #else
     (void)name;
 #endif
@@ -129,6 +167,32 @@ tresult PLUGIN_API OxoSynth2Controller::getMidiControllerAssignment(int32 busInd
         return kResultTrue;
     }
     return kResultFalse;
+}
+
+// Program changes on every channel of the MIDI input (omni, like the notes)
+// go to the root unit's program parameter.
+tresult PLUGIN_API OxoSynth2Controller::getUnitByBus(Vst::MediaType type, Vst::BusDirection dir, int32 busIndex,
+                                                      int32 channel, Vst::UnitID &unitId) {
+    if (type != Vst::MediaTypes::kEvent || dir != Vst::BusDirections::kInput || busIndex != 0 || channel < 0 ||
+        channel > 15)
+        return kResultFalse;
+    unitId = Vst::kRootUnitId;
+    return kResultTrue;
+}
+
+// The processor can receive messages from now on: hand it the current bank.
+tresult PLUGIN_API OxoSynth2Controller::connect(Vst::IConnectionPoint *other) {
+    const tresult result = EditControllerEx1::connect(other);
+    if (result == kResultOk) ResendProgramBank();
+    return result;
+}
+
+// The processor switched program (output token): follow it.
+tresult PLUGIN_API OxoSynth2Controller::setParamNormalized(Vst::ParamID tag, Vst::ParamValue value) {
+    const bool switched = tag == kProgramTokenParamId && value != getParamNormalized(tag);
+    const tresult result = EditControllerEx1::setParamNormalized(tag, value);
+    if (switched) AdoptProgramChange(int(std::lround(value * kProgramTokenScale)) & 127);
+    return result;
 }
 
 // ---- SynthEditorCore ----------------------------------------------------------
@@ -181,6 +245,28 @@ void OxoSynth2Controller::ProgramChanged(const s2::LibraryProgram &program) {
         sendMessage(message);
         message->release();
     }
+    // The program parameter shows the slot (the bank becomes the current one).
+    if (program.slot >= 0) EditControllerEx1::setParamNormalized(kProgramParamId, program.slot / 127.0);
+}
+
+bool OxoSynth2Controller::ProgramBankChanged(const s2::ProgramBankValues &values) {
+    if (Vst::ProgramList *list = getProgramList(kProgramParamId)) {
+        for (int s = 0; s < s2::kBankSlots; ++s) {
+            Vst::String128 name;
+            ToString128(s2::ProgramLabel(CurrentProgramBank(), s), name);
+            list->setProgramName(s, name);
+        }
+        notifyProgramListChange(kProgramParamId);
+    }
+    bool sent = false;
+    if (Vst::IMessage *message = allocateMessage()) {
+        message->setMessageID("OxoProgramBank");
+        if (Vst::IAttributeList *attributes = message->getAttributes())
+            attributes->setBinary("values", &values, uint32(sizeof values));
+        sent = sendMessage(message) == kResultOk;
+        message->release();
+    }
+    return sent;
 }
 
 void OxoSynth2Controller::ThemeChanged(const std::string &theme) {
@@ -203,6 +289,18 @@ void OxoSynth2Controller::SetMidiCC(int id, int32_t cc) {
         for (int i = 0; i < s2::kParamCount; ++i) table[i] = learnCc_[size_t(i)];
         if (Vst::IAttributeList *attributes = message->getAttributes())
             attributes->setBinary("cc", table, uint32(sizeof table));
+        sendMessage(message);
+        message->release();
+    }
+}
+
+void OxoSynth2Controller::SetProgramChangeOn(bool on) {
+    if (on == programChangeOn_) return;
+    programChangeOn_ = on;
+    storage::SaveProgramChange(on);
+    if (Vst::IMessage *message = allocateMessage()) {
+        message->setMessageID("OxoProgramChangeOn");
+        if (Vst::IAttributeList *attributes = message->getAttributes()) attributes->setInt("on", on ? 1 : 0);
         sendMessage(message);
         message->release();
     }

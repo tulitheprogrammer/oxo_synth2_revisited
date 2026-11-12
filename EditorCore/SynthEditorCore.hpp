@@ -9,8 +9,14 @@
 #include "EngineCore/MidiLearn.hpp"
 #include "EngineCore/ParamFormat.hpp"
 #include "EngineCore/PatchLibrary.hpp"
+#include "EngineCore/ProgramChange.hpp"
 #include "EditorCore/OxoSynth2Bridge.h"
 #include "EditorCore/Trash.hpp"
+
+#if defined(_WIN32)
+#include "Windows_Build/Source/WindowsPresetIndex.hpp"
+#include "Windows_Build/Source/WindowsStorage.hpp"
+#endif
 
 #include <algorithm>
 #include <fstream>
@@ -37,6 +43,14 @@ public:
     virtual int32_t LastCC() = 0;
     virtual uint64_t VoiceStates() = 0; // s2::Synth::VoiceStates as last seen by the UI side
     virtual void AllNotesOff() = 0;     // menu: s2::Synth::Panic on the audio side
+    // MIDI program change (EngineCore/ProgramChange.hpp): the current bank's
+    // values for the DSP, false = not delivered (retried by ResendProgramBank).
+    virtual bool ProgramBankChanged(const s2::ProgramBankValues &) { return true; }
+    virtual void PollProgramChange() {} // wrappers hearing of the DSP's switch by polling (AUv3)
+    // Menu > Program change (storage::LoadProgramChange): the DSP plays or
+    // ignores program changes; the setter also saves the preference.
+    virtual bool ProgramChangeOn() { return false; }
+    virtual void SetProgramChangeOn(bool) {}
 
     // ---- shared ----
     // `factory` = the read-only factory bank in the plugin bundle, `build` =
@@ -45,6 +59,15 @@ public:
                           const std::string &build = {}) {
         library_.Configure(root, factory, build);
         library_.SetTrash(MoveToTrash);
+#if defined(_WIN32)
+        // Restore the bank index (in the settings folder) at once; the
+        // background rescan of every editor / browser open replaces it.
+        std::vector<s2::PatchBank> cached;
+        if (winindex::Load(storage::win::Chosen().data,root,factory,cached)) {
+            library_.AdoptIndex(std::move(cached));
+            savedIndexRevision_ = library_.Revision();
+        }
+#endif
     }
     s2::PatchManager &Library() { return library_; }
 
@@ -62,7 +85,36 @@ public:
         patchColor_ = color;
         program_ = program;
         ++serial_;
+        SyncProgramBank();
     }
+
+    // ---- MIDI program change: 0..127 = slot 001..128 of the current bank,
+    // the last library program's (Init / a patch file keep it). The DSP
+    // switches by itself from the values handed over here; the UI side
+    // follows through AdoptProgramChange.
+    // Re-reads the bank when it or the library changed.
+    void SyncProgramBank() {
+        if (program_.slot >= 0) pcBank_ = program_.bank, pcKnown_ = true;
+        if (!pcKnown_ || (pcSent_ && pcRead_ == pcBank_ && pcRevision_ == library_.Revision())) return;
+        pcPatches_ = s2::ReadProgramBank(library_.Root(), library_.Factory(), pcBank_);
+        pcRead_ = pcBank_, pcRevision_ = library_.Revision();
+        pcSent_ = ProgramBankChanged(pcPatches_.Values());
+    }
+    void ResendProgramBank() { // e.g. the DSP just became reachable
+        pcSent_ = false;
+        SyncProgramBank();
+    }
+    // The DSP switched to `slot` of the current bank (the parameters hold
+    // its values already): name, LCD, session program.
+    void AdoptProgramChange(int slot) {
+        if (!pcKnown_ || slot < 0 || slot >= s2::kBankSlots || !pcPatches_.present[size_t(slot)]) return;
+        const s2::Sy1Patch &p = pcPatches_.patches[size_t(slot)];
+        patchColor_ = p.color;
+        SetPatchName(p.name);
+        SetProgram({pcRead_, slot});
+        ++serial_;
+    }
+    const s2::ProgramBankPatches &CurrentProgramBank() const { return pcPatches_; }
 
     // The library program the sound came from (LCD "NNN:name" + bank line,
     // browser selection), none after Init / a patch file.
@@ -193,9 +245,15 @@ public:
             return C(c)->Keep(s2::FormatParam(id, v, sync >= 0 && C(c)->NativeValue(sync),
                                               C(c)->NativeValue(s2::kEffectType)));
         };
-        h.patchName = [](void *c) { return C(c)->patchName_.c_str(); };
+        h.patchName = [](void *c) {
+            C(c)->PollProgramChange();
+            return C(c)->patchName_.c_str();
+        };
         h.setPatchName = [](void *c, const char *n) { C(c)->SetPatchName(n ? n : ""); };
-        h.patchSerial = [](void *c) { return C(c)->serial_; };
+        h.patchSerial = [](void *c) {
+            C(c)->PollProgramChange();
+            return C(c)->serial_;
+        };
         h.patchText = [](void *c) { return C(c)->Keep(s2::WriteSy1(C(c)->CurrentPatch())); };
         h.loadPatchFile = [](void *c, const char *p) { return int32_t(p && C(c)->LoadPatchFile(p)); };
         h.savePatchFile = [](void *c, const char *p) { return int32_t(p && C(c)->SavePatchFile(p)); };
@@ -206,8 +264,21 @@ public:
         h.rescanLibrary = [](void *c) { C(c)->library_.Rescan(); };
         h.startLibraryScan = [](void *c) { C(c)->library_.StartRescan(); };
         h.libraryRevision = [](void *c) {
-            C(c)->library_.PollRescan();
-            return int32_t(C(c)->library_.Revision());
+            auto* editor = C(c);
+            editor->library_.PollRescan();
+#if defined(_WIN32)
+            const int revision = editor->library_.Revision();
+            if (revision > 0 && revision != editor->savedIndexRevision_) {
+                // Writes, imports and explicit refreshes update the index.
+                // Even when cache writing fails, don't retry every 50ms.
+                editor->savedIndexRevision_ = revision;
+                winindex::Save(storage::win::Chosen().data,
+                               editor->library_.Root(),editor->library_.Factory(),
+                               editor->library_.Library().Banks());
+            }
+#endif
+            editor->SyncProgramBank(); // a write / move / rescan may have changed the current bank
+            return int32_t(editor->library_.Revision());
         };
         h.libraryScanning = [](void *c) { return int32_t(C(c)->library_.Scanning()); };
         h.libraryScanProgress = [](void *c, int32_t *b, int32_t *p, int32_t *t) {
@@ -263,6 +334,7 @@ public:
         h.voiceStates = [](void *c) { return C(c)->VoiceStates(); };
         h.allNotesOff = [](void *c) { C(c)->AllNotesOff(); };
         h.loadedProgram = [](void *c, int32_t *bank, int32_t *slot) {
+            C(c)->PollProgramChange();
             const s2::LibraryProgram &p = C(c)->program_;
             *bank = *slot = -1;
             if (p.slot < 0) return;
@@ -278,12 +350,17 @@ public:
             C(c)->theme_ = theme;
             C(c)->ThemeChanged(theme);
         };
+        h.programChange = [](void *c) { return int32_t(C(c)->ProgramChangeOn()); };
+        h.setProgramChange = [](void *c, int32_t on) { C(c)->SetProgramChangeOn(on != 0); };
         return h;
     }
 
 protected:
     std::string ProgramBank(size_t bank) const { return s2::ProgramBank(library_.Library(), library_.Root(), bank); }
 
+#if defined(_WIN32)
+    int savedIndexRevision_ = 0;
+#endif
     std::string patchName_ = "Init";
     std::string patchColor_ = "default";
     int32_t serial_ = 0;
@@ -296,7 +373,14 @@ private:
         if (p == program_) return;
         program_ = p;
         ProgramChanged(p);
+        SyncProgramBank();
     }
+    // The program change bank (see SyncProgramBank): pcBank_ = the current
+    // one, pcRead_ / pcRevision_ = what pcPatches_ holds.
+    bool pcKnown_ = false, pcSent_ = false;
+    std::string pcBank_, pcRead_;
+    int pcRevision_ = -1;
+    s2::ProgramBankPatches pcPatches_;
     static SynthEditorCore *C(void *ctx) { return static_cast<SynthEditorCore *>(ctx); }
     const char *Keep(std::string s) {
         scratch_ = std::move(s);

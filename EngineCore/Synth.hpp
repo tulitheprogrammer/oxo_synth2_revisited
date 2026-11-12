@@ -50,6 +50,7 @@ public:
     // routing offsets, see ApplyRouting).
     void SetParam(int id, int32_t value) {
         if (id < 0 || id >= kParamCount) return;
+        FlushNoteOns();
         if (switch_ == Switch::Out) { // patch switch: lands at silence
             pending_[id] = value;
             pendingMask_[size_t(id)] = true;
@@ -93,12 +94,20 @@ public:
         keyVelocity_[key] = uint8_t(std::clamp(velocity, 1, 127));
         sustained_[key] = false;
         if (values_[kArpOn]) return ArpNoteOn(key, velocity);
-        VoiceNoteOn(key, velocity);
+        // (measured: free-phase chords nulled at +2 dB, -50 dB reversed)
+        // poly notes in one 16-sample sub-block (the original's event grid)
+        // take their voices in REVERSE order: the last one gets the next
+        // round-robin slot. Mono / legato keep the arrival order (last note
+        // wins, measured). Queued until the next render or other event.
+        if (values_[kPlayMode] != 0 || noteOnCount_ == int(noteOns_.size())) FlushNoteOns();
+        if (values_[kPlayMode] != 0) return VoiceNoteOn(key, velocity);
+        noteOns_[size_t(noteOnCount_++)] = {uint8_t(key), uint8_t(keyVelocity_[key])};
     }
 
     // Sustain pedal (CC 64): a key released while the pedal is down is held
     // (arpeggiator included) until the pedal comes up.
     void NoteOff(int key) {
+        FlushNoteOns();
         key &= 127;
         keyDown_[key] = false;
         if (sustain_) {
@@ -124,6 +133,13 @@ private:
     // notes playing): on = the held keys become the arp's (it arpeggiates
     // them), off = the arp's keys play their own voices again. Without this
     // a key would be released by the wrong path and stick.
+    void FlushNoteOns() {
+        while (noteOnCount_ > 0) {
+            const auto [key, velocity] = noteOns_[size_t(--noteOnCount_)];
+            VoiceNoteOn(key, velocity);
+        }
+    }
+
     void ArpSwitched() {
         if (values_[kArpOn]) {
             for (Voice &v : voices_)
@@ -151,13 +167,17 @@ private:
         if (!values_[kArpOn] || key != arpPlaying_) VoiceNoteOff(key);
     }
 
-    void VoiceNoteOn(int key, int velocity) {
+    void KeySyncRestart() {
+        if (values_[kLfo1KeySync]) lfo_[0].Restart();
+        if (values_[kLfo2KeySync]) lfo_[1].Restart();
+    }
+
+    // (measured) key sync restarts the LFOs when no key was held; arp steps
+    // (`keySync` false) never do, the key starting the arp phrase does.
+    void VoiceNoteOn(int key, int velocity, bool keySync = true) {
         bool anyGate = false;
         for (const Voice &v : voices_) anyGate |= v.Active() && v.Gate();
-        if (!anyGate) { // (manual) key sync resets the phase when no key was held
-            if (values_[kLfo1KeySync]) lfo_[0].ResetPhase();
-            if (values_[kLfo2KeySync]) lfo_[1].ResetPhase();
-        }
+        if (keySync && !anyGate) KeySyncRestart();
         const int mode = values_[kPlayMode]; // 0 poly, 1 mono, 2 legato
         const bool porta = values_[kPortaTime] > 0;
         // The held-key stack follows every key in EVERY mode: a patch change
@@ -187,8 +207,11 @@ private:
         // slot 0 (unison: 0..N-1), poly the round robin.
         const bool glide = porta && !values_[kPortaAuto];
         if (!values_[kUnisonOn]) {
-            Voice &v = mode != 0 ? MonoVoice(0) : *AllocateVoice();
-            v.Start(key, velocity, glide, values_, now_);
+            // (measured) a poly chord over the polyphony: the notes processed
+            // last (= its first ones, see NoteOn) find no voice and are dropped,
+            // voices started in the same sub-block are never stolen
+            Voice *v = mode != 0 ? &MonoVoice(0) : AllocateVoice(true);
+            if (v) v->Start(key, velocity, glide, values_, now_);
             return;
         }
         // (measured) unison: N voices evenly over +-D cents, pan spread
@@ -199,25 +222,25 @@ private:
         const double spread = (values_[kUnisonPan] - 64) / 64.0;
         const uint64_t age = now_;
         // (measured) unison phase shift (osc phase > 0; with 0 the slots'
-        // phases carry on): the k-th voice started starts kPhaseDeg[k] * v /
-        // 127 degrees later (any voice count; = the slots' initial phases).
-        static constexpr double kPhaseDeg[8] = {0, 62.2, 356.4, 60.5, 317.0, 281.5, 136.3, 303.1};
-        const double shift = values_[kUnisonPhase] / 127.0 / 360.0;
-        // (measured, check_unison.py) a note takes min(voices, polyphony)
-        // voices (round robin as usual) but never steals from a note started
-        // at the same time (a chord keeps its FIRST notes; the rest of the
-        // stack is dropped); a voice's place in the stack (detune, pan, odd =
-        // pitch) is FIXED by its slot: slot % voices (a stack may hold a
-        // place twice); the phase shift follows k.
+        // phases carry on): the k-th voice started shifts each oscillator by
+        // v / 127 of its slot k phase minus slot 0's (Voice::StartPhases).
+        const double shift = values_[kUnisonPhase] / 127.0;
+        // (measured, check_unison.py + chord slot orders) a note takes
+        // min(voices, polyphony) voices (round robin as usual); a stack DOES
+        // steal from a note started in the same sub-block (oldest first): a
+        // chord over the polyphony keeps its first notes because they are
+        // processed last (see NoteOn); a voice's place in the stack (detune,
+        // pan, odd = pitch) is FIXED by its slot: slot % voices (a stack may
+        // hold a place twice); the phase shift follows k.
         const int sounding = std::min(n, std::clamp<int>(values_[kPolyphony], 1, kMaxVoices));
         for (int k = 0; k < sounding; ++k) {
-            Voice *slot = mode != 0 ? &MonoVoice(k) : AllocateVoice(true);
+            Voice *slot = mode != 0 ? &MonoVoice(k) : AllocateVoice();
             if (!slot) break;
             Voice &v = *slot;
             const int i = lastVoice_ % n;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
             v.Start(key, velocity, glide, values_, age, t * d, t * spread,
-                    (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[k] * shift);
+                    (i & 1) ? values_[kUnisonPitch] - 24 : 0, k, shift);
         }
     }
 
@@ -269,6 +292,7 @@ private:
             arpStep_ = -1;
             arpCountdown_ = 0;
             arpDir_ = 1;
+            KeySyncRestart();
         }
         if (std::find(arpKeys_, arpKeys_ + arpCount_, key) != arpKeys_ + arpCount_) return;
         if (arpCount_ < 32) arpKeys_[arpCount_++] = key;
@@ -320,7 +344,7 @@ private:
             arpAccum_ -= stepSamples;
             if (arpPlaying_ >= 0) VoiceNoteOff(arpPlaying_);
             arpPlaying_ = ArpNextKey();
-            if (values_[kArpGate] > 0) VoiceNoteOn(arpPlaying_, arpVelocity_); // (measured) gate 0 = silent
+            if (values_[kArpGate] > 0) VoiceNoteOn(arpPlaying_, arpVelocity_, false); // (measured) gate 0 = silent
             else arpPlaying_ = -1;
             arpCountdown_ += stepSamples;
             arpGateCountdown_ = std::max(1, int(stepSamples * values_[kArpGate] / 127.0));
@@ -332,6 +356,7 @@ private:
 
 public:
     void ControlChange(int cc, int value) {
+        FlushNoteOns();
         cc &= 127;
         cc_[cc] = std::clamp(value, 0, 127);
         if (cc == 64) SetSustain(value >= 64);
@@ -339,10 +364,12 @@ public:
         ApplyRouting();
     }
     void PitchBend(int value14) {
+        FlushNoteOns();
         bend_ = value14 - 8192;
         ApplyRouting();
     }
     void ChannelPressure(int value) {
+        FlushNoteOns();
         pressure_ = std::clamp(value, 0, 127);
         ApplyRouting();
     }
@@ -356,6 +383,7 @@ public:
     }
 
     void AllNotesOff(bool immediate) {
+        noteOnCount_ = 0;
         for (Voice &v : voices_) immediate ? v.Kill() : v.Release();
         sustained_.fill(false);
         heldCount_ = 0;
@@ -377,6 +405,7 @@ public:
     }
 
     void Reset() {
+        noteOnCount_ = 0;
         for (Voice &v : voices_) v.Kill();
         heldCount_ = 0;
         arpCount_ = 0;
@@ -409,38 +438,65 @@ public:
     bool PatchChanging() const { return switch_ != Switch::None; }
 
     void Render(float *left, float *right, int frames) {
+        if (frames > kMaxRender) { // (the LFO pan gains' buffer)
+            for (int pos = 0; pos < frames; pos += kMaxRender)
+                Render(left + pos, right + pos, std::min(kMaxRender, frames - pos));
+            return;
+        }
+        FlushNoteOns();
+        const simd::ScopedNoDenormals noDenormals;
         std::fill(left, left + frames, 0.0f);
         std::fill(right, right + frames, 0.0f);
         // (measured, measure_pitch_mod.py) only the bend's 7-bit MSB counts:
         // trunc((v - 8192) / 128) clamped to +-63, / 63 = the full range
         const double bendSemis = std::clamp(bend_ / 128, -63, 63) / 63.0 * values_[kBendRange];
         int toArp = ArpAdvance(0);
+        bool panLfo = false;
         for (int pos = 0, n = 0; pos < frames; pos += n) {
             n = std::min({kLfoBlock, frames - pos, toArp});
             const double *lfo[2] = {nullptr, nullptr};
+            const int32_t *lfoSteps[2] = {nullptr, nullptr};
             for (int k = 0; k < 2; ++k) {
                 // LFOs run even when off so their phase stays free-running;
                 // (measured) tempo-synced LFOs are NOT locked to the host beat.
                 const int speed = values_[k ? kLfo2Speed : kLfo1Speed];
                 const double hz = values_[k ? kLfo2TempoSync : kLfo1TempoSync] ? tempo_ / 60.0 / Lfo::SyncBeats(speed)
                                                                                  : Lfo::SpeedHz(speed);
-                lfo_[k].Render(lfoBuf_[k], n, values_[k ? kLfo2Type : kLfo1Type], hz, sampleRate_);
+                // (an LFO on pitch: its own whole steps, see Lfo.hpp)
+                const int dest = values_[k ? kLfo2Dest : kLfo1Dest];
+                const bool pitch = values_[k ? kLfo2On : kLfo1On] && (dest <= 2);
+                lfo_[k].Render(lfoBuf_[k], n, values_[k ? kLfo2Type : kLfo1Type], hz, sampleRate_,
+                               pitch ? lfoSteps_[k] : nullptr, Lfo::PitchSteps(values_[k ? kLfo2Depth : kLfo1Depth]),
+                               dest == 4);
                 if (values_[k ? kLfo2On : kLfo1On]) lfo[k] = lfoBuf_[k];
+                lfoSteps[k] = pitch ? lfoSteps_[k] : nullptr;
             }
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
             for (Voice &v : voices_)
-                v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+                v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, lfoSteps, cutoffStart,
+                         cutoffStep);
             if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
+            panLfo = LfoPanGains(pos, n, lfo);
             toArp = ArpAdvance(n);
         }
-        // (measured, measure_fx_order.py) voices -> effect -> EQ -> delay -> chorus
+        // (measured, measure_fx_order.py) voices -> effect -> pan -> EQ -> delay -> chorus
         if (values_[kEffectOn]) effect_.Process(left, right, frames, values_);
+        Pan(left, right, frames, panLfo);
         eq_.Process(left, right, frames, values_);
-        if (values_[kDelayOn]) delay_.Process(left, right, frames, values_, tempo_);
-        else delay_.ClearNow();
-        if (values_[kChorusOn]) chorus_.Process(left, right, frames, values_);
-        else chorus_.Advance(frames, values_);
+        if (values_[kDelayOn] && values_[kChorusOn]) {
+            // (measured) the echoes reach the output through the chorus only
+            for (int pos = 0; pos < frames; pos += kEchoChunk) {
+                const int n = std::min(kEchoChunk, frames - pos);
+                delay_.Process(left + pos, right + pos, n, values_, tempo_, echoL_, echoR_);
+                chorus_.Process(left + pos, right + pos, n, values_, echoL_, echoR_);
+            }
+        } else {
+            if (values_[kDelayOn]) delay_.Process(left, right, frames, values_, tempo_);
+            else delay_.ClearNow();
+            if (values_[kChorusOn]) chorus_.Process(left, right, frames, values_);
+            else chorus_.Advance(frames, values_);
+        }
         if (volume_ != 1.0 || volumeTarget_ != 1.0) { // master volume, linear ramp over the block
             const double step = frames > 0 ? (volumeTarget_ - volume_) / frames : 0.0;
             for (int i = 0; i < frames; ++i) {
@@ -518,6 +574,45 @@ private:
         return step;
     }
 
+    // (measured, pan with each effect type, delay / chorus types that cross
+    // the channels) the patch pan and the LFOs on pan act on the voice mix
+    // AFTER the effect, before the delay and chorus: an effect sees the
+    // centred mix, both channels = its output times the pan gains (only the
+    // unison spread pans before it, Voice). Patch pan q = (pan - 64) / 64
+    // below the centre, / 63 above, balance gains (centre 1/1, hard side
+    // 1/0). LFO -> position q = 1 - (1 - s)^3 for s = depth / 127 * lfo >= 0
+    // (odd, + = left, both LFOs: s = the depth-weighted sum, unclamped:
+    // 127 + 127 -> gains 2 / -1), gains toward side 1 + |q| / 2, away side
+    // 1 - |q|; the two gains multiply.
+    // The LFOs' gains for the chunk at pos (the effect runs on the whole
+    // block first); false = no LFO on pan.
+    bool LfoPanGains(int pos, int n, const double *const lfo[2]) {
+        const double *v[2];
+        double scale[2];
+        int routes = 0;
+        for (int k = 0; k < 2; ++k)
+            if (Voice::LfoDest(values_, lfo, k) == 7) v[routes] = lfo[k], scale[routes++] = values_[k ? kLfo2Depth : kLfo1Depth] / 127.0;
+        for (int i = 0; i < n && routes; ++i) {
+            double s = 0;
+            for (int k = 0; k < routes; ++k) s += scale[k] * v[k][i];
+            // (the cube by hand: a pow call here, even never taken, cost the loop ~40 instructions)
+            const double u = 1.0 - std::fabs(s), cube = u * u * u;
+            const double q = s >= 0 ? 1.0 - cube : cube - 1.0;
+            panGain_[0][pos + i] = float(q >= 0 ? 1.0 + 0.5 * q : 1.0 + q);
+            panGain_[1][pos + i] = float(q >= 0 ? 1.0 - q : 1.0 - 0.5 * q);
+        }
+        return routes > 0;
+    }
+    void Pan(float *left, float *right, int n, bool lfo) const {
+        const double q = (values_[kPan] - 64) / (values_[kPan] < 64 ? 64.0 : 63.0);
+        const double pl = std::min(1.0, 1.0 - q), pr = std::min(1.0, 1.0 + q);
+        if (!lfo && q == 0) return;
+        for (int i = 0; i < n; ++i) {
+            left[i] = float(left[i] * (lfo ? pl * panGain_[0][i] : pl));
+            right[i] = float(right[i] * (lfo ? pr * panGain_[1][i] : pr));
+        }
+    }
+
     // Patch switch fade on one render chunk: ramp x (gain = smoothstep(x)),
     // stage changes at chunk ends.
     void SwitchFade(float *left, float *right, int n) {
@@ -555,9 +650,9 @@ private:
         return voices_[size_t(slot)];
     }
 
-    // keepSameTime (unison): voices started at the same time (same 16-sample
-    // sub-block, the original's event grid) can't be stolen; nullptr when
-    // nothing else is left.
+    // keepSameTime (poly notes): voices started at the same time (same
+    // 16-sample sub-block, the original's event grid) can't be stolen;
+    // nullptr when nothing else is left.
     Voice *AllocateVoice(bool keepSameTime = false) {
         // Round robin like Synth1 (its voice squares): the next idle voice
         // after the last one started. (measured, measure_steal.py) at the
@@ -576,7 +671,7 @@ private:
         return pick;
     }
 
-    static constexpr int kLfoBlock = 64;
+    static constexpr int kLfoBlock = Voice::kMaxChunk;
     PatchValues base_{};
     PatchValues values_{};
     int routed_[2] = {-1, -1};
@@ -587,14 +682,21 @@ private:
     std::array<uint8_t, 128> keyVelocity_{};
     std::array<Voice, kMaxVoices> voices_{};
     int lastVoice_ = -1; // round robin
+    std::array<std::pair<uint8_t, uint8_t>, 32> noteOns_{}; // poly note ons of this sub-block (key, velocity)
+    int noteOnCount_ = 0;
     double cutoff_ = kParams[kFilterFreq].def, cutoffTarget_ = kParams[kFilterFreq].def, cutoffRate_ = 0; // knob glide
     double volume_ = 1.0, volumeTarget_ = 1.0; // VolumeGain, ramped per Render
     Lfo lfo_[2];
     TempoDelay delay_;
     Chorus chorus_;
+    static constexpr int kEchoChunk = 256;
+    float echoL_[kEchoChunk] = {}, echoR_[kEchoChunk] = {};
     Equalizer eq_;
     EffectUnit effect_;
+    static constexpr int kMaxRender = 4096; // longer Render calls run in pieces
+    float panGain_[2][kMaxRender] = {};
     double lfoBuf_[2][kLfoBlock] = {};
+    int32_t lfoSteps_[2][kLfoBlock] = {};
     Rng rng_;
     double sampleRate_ = 44100.0;
     double tempo_ = 120.0;
