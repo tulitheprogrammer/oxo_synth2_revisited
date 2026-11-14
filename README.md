@@ -70,6 +70,10 @@ Needs a Mac with a recent Xcode (developed with Xcode 27) and CMake 3.25+.
 ./build_vst3.sh   # builds and installs the VST3 + AUv2 into ~/Library/Audio/Plug-Ins
 ```
 
+Options: `--no-install` builds only; `--global` installs the VST3 into
+`/Library/Audio/Plug-Ins/VST3` and the AUv2 into `~/Library/Audio/Plug-Ins/Components`
+(the AU is kept out of the global folder on purpose — see below).
+
 ### iPad (AUv3)
 
 Needs a Mac with a recent Xcode. Open and build `OxoSynth2.xcodeproj` in

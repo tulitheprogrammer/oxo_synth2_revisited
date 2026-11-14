@@ -177,9 +177,24 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 
 - `./build_vst3.sh` → builds and installs `OxoSynth2.vst3` + `Oxo
   Synth2.component` into ~/Library/Audio/Plug-Ins. `--no-install` = build
-  only. The AU's nested `Contents/Resources/plugin.vst3` is a SYMLINK in
+  only. `--global` = the VST3 into `/Library/Audio/Plug-Ins/VST3` and the
+  AU still into `~/Library/Audio/Plug-Ins/Components`: a `Components`
+  folder that is a symlink onto an exFAT volume (some setups, incl. this
+  machine's global one) is NOT scanned by AudioComponentRegistrar — 48
+  bundles there, 4 registered — so the AU would never load from it.
+  Both places get an AppleDouble hazard: exFAT cannot store xattrs, so the
+  driver writes `._NAME` sidecars into the bundle as it is created
+  (`rsync --exclude` and `ditto --noextattr` cannot stop it: they appear
+  on write). Those unsigned files break the code seal, so `seal_bundle`
+  purges them, signs, and purges AGAIN — signing itself re-creates
+  `._CodeResources`. A missed second purge shows up as
+  `file added: … ._Info.plist` from `codesign --verify`.
+  `moduleinfo.json` (in `Contents/Resources/`) is regenerated when it is
+  missing or 0 bytes: the SDK's post-build step writes it inside the
+  bundle and an incremental Xcode build can skip it. The AU's nested
+  `Contents/Resources/plugin.vst3` is a SYMLINK in
   the build tree, so the install replaces it with a real copy and re-signs
-  the component adhoc (like `tools/prepare_mac_installer`): a symlink there
+  the component inner-out (like `tools/prepare_mac_installer`): a symlink there
   breaks the strict code seal and dies with the checkout. Validator 47/47
   (`OxoSynth2VST3/build/bin/Release/validator
   <bundle>`; run it with `HOME=$(mktemp -d)` to keep your library out of
