@@ -11,6 +11,7 @@
 #include "EngineCore/PatchLibrary.hpp"
 #include "EngineCore/ProgramChange.hpp"
 #include "EditorCore/OxoSynth2Bridge.h"
+#include "EditorCore/Storage.hpp"
 #include "EditorCore/Trash.hpp"
 
 #if defined(_WIN32)
@@ -204,11 +205,11 @@ public:
 
     // Browser > Delete bank (PatchManager::DeleteBank); the sound playing
     // stays, but no longer points into the deleted bank.
-    bool DeleteBank(int bank) {
+    s2::DeleteResult DeleteBank(int bank) {
         library_.EnsureScanned();
-        if (bank < 0 || size_t(bank) >= library_.Library().Banks().size()) return false;
+        if (bank < 0 || size_t(bank) >= library_.Library().Banks().size()) return s2::kDeleteFailed;
         const std::string rel = ProgramBank(size_t(bank));
-        const bool ok = library_.DeleteBank(bank);
+        const s2::DeleteResult ok = library_.DeleteBank(bank);
         if (program_.slot >= 0 && program_.bank == rel) SetProgram({});
         return ok;
     }
@@ -352,6 +353,8 @@ public:
         };
         h.programChange = [](void *c) { return int32_t(C(c)->ProgramChangeOn()); };
         h.setProgramChange = [](void *c, int32_t on) { C(c)->SetProgramChangeOn(on != 0); };
+        h.invertWheel = [](void *) { return int32_t(storage::InvertWheel()); };
+        h.setInvertWheel = [](void *, int32_t on) { storage::SetInvertWheel(on != 0); };
         return h;
     }
 

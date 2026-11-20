@@ -36,10 +36,14 @@ on the Clavia Nord Lead 2; abandoned, its mac AU is x86_64-only and dies
 with Rosetta). Same 99 parameters (same indices), loads `.sy1` patches and
 zip banks, SOUNDS THE SAME (tuned against renders of the original). GUI =
 Synth1's layout, redrawn. MIT, free. Formats: mac VST3 + the SDK's AUv2
-wrapper, iPad AUv3 (App Store). Windows / Linux: welcome as ports.
-Stack: Steinberg VST3 SDK + header-only C++ engine + SwiftUI editor (no
-JUCE). Official builds ("Oxo Synth2", oxo-music.com / App Store) come from
-tagged commits of this repo.
+wrapper, iPad AUv3 (App Store), Windows x64 VST3, Linux x86_64 / aarch64
+VST3 (both started as contributed ports, README credits). Stack: Steinberg
+VST3 SDK + header-only C++ engine (no JUCE) + TWO editors drawing the same
+panel: SwiftUI (`Shared/`, mac + iPad) and C++ `DesktopEditor/` (Windows
+GDI+, Linux cairo): a panel change is made in both. Official builds ("Oxo
+Synth2", oxo-music.com / App Store) come from tagged commits of this repo:
+mac and iPad built here (signing, notarization), Windows and Linux by the
+manual GitHub Actions workflows.
 
 ## Identity
 
@@ -65,9 +69,12 @@ Synth2"; iPad (iOS 17, iPad only) app `com.oxo.music.oxosynth2`, appex
 Per-user settings: mac `~/Library/Application Support/Oxo Music/Oxo Synth2`
 (`midi_mappings.json`, `themes.json`, `settings.json`), iPad the appex's
 container, Windows `%APPDATA%\Oxo Music\Oxo Synth2` (+
-`preset_index.bin`, theme files `Themes\*.json`: one flat hex map each,
-listed after the saved themes, never written). Bank library: mac `~/Music/Oxo Music/Oxo Synth2`, iPad
-`<app group>/Synth2`, Windows `Documents\Oxo Music\Oxo Synth2`. Windows
+`preset_index.bin`), Linux `$XDG_CONFIG_HOME/Oxo Music/Oxo Synth2`
+(default `~/.config`); both + theme files `Themes/*.json` (one flat hex
+map each, listed after the saved themes, never written). Bank library: mac
+`~/Music/Oxo Music/Oxo Synth2`, iPad `<app group>/Synth2`, Windows
+`Documents\Oxo Music\Oxo Synth2`, Linux the desktop's Documents
+(`XDG_DOCUMENTS_DIR`, else `~/Documents`) `/Oxo Music/Oxo Synth2`. Windows
 portable mode: a `Synth2_Data` folder next to the `.vst3` bundle holds all
 of it (banks in `Synth2_Data\Presets`).
 VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`.
@@ -95,7 +102,7 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   `Storage.hpp` (per-user files, mac library / factory paths), `Trash.hpp`,
   `Json.hpp` (small strict JSON reader), `Settings.hpp` (settings.json:
   independent top-level keys, a save edits only its value in place; Windows
-  zoom, program change; `EngineCoreTests/SettingsTests.cpp`), `Themes.hpp` (the C++ mirror of
+  zoom, program change, invert mouse wheel; `EngineCoreTests/SettingsTests.cpp`), `Themes.hpp` (the C++ mirror of
   `Shared/SynthTheme.swift` for C++ editors: 13 keys, factory themes,
   lenient hex map, `stateText`, the `themes.json` store;
   `EngineCoreTests/ThemesTests.cpp` PARSES the Swift file, so a key or a
@@ -104,7 +111,7 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 - `OxoSynth2VST3/` — processor / controller / entry / editor view, CMake
   (SDK + AUv2 wrapper with the auwrapper.mm patches, Swift
   static lib `OxoSynth2Editor`, links zlib).
-- `Shared/` — SwiftUI editor used by both formats: `SynthModel.swift`
+- `Shared/` — SwiftUI editor of the mac (VST3 / AUv2) and iPad (AUv3): `SynthModel.swift`
   (`SynthHost` protocol + model polling the host at 30 Hz; MIDI learn
   state, LCD readout, wheel gestures, browser keys), `HooksSynthHost.swift`
   (the C hooks as a `SynthHost`), `SynthControls.swift` (widgets: KnobView,
@@ -148,25 +155,74 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   scripts (its README: chunk layout, param mapping, process-wide state).
 - `tools/s2render/` — renders the same jobs through our engine.
 - `tools/prepare_mac_installer`, `tools/mac_installer/` — pkg / dmg.
+- `tools/prepare_linux_installer`, `tools/linux_installer/` (`install.sh`,
+  `README.txt`), `.github/workflows/linux-release.yml` — Linux tar.gz.
+- `tools/prepare_win_installer.bat`, `tools/win_installer/` (`synth2.iss`,
+  `README.pdf`), `.github/workflows/windows-release.yml` — Windows exe +
+  zip. `tools/win_check/` — mingw compile check of the Windows sources.
 - `reference/meta/` — committed measurements (params.json, nativemap.txt,
   the tables' sources). `reference/renders/` + `reference/derived/`
   (download, README "Reference data") and `reference/presets/` are
   gitignored.
 - `Windows_Build/` — Windows x64 VST3 port (contributed, PR #3): CMake
   project (parses `Identity.xcconfig` like the mac one, vendored zlib
-  1.3.1 = byte-identical upstream), `Source/` = native Win32 / GDI+ editor
-  (`WindowsEditor.cpp`: the SwiftUI panel's layout redrawn; static layer
-  cached in a bitmap, dynamic parts redrawn in the invalid rect only,
-  `TextCache` for outlines, parameter values polled like SynthModel),
+  1.3.1 = byte-identical upstream), editor = `DesktopEditor/` (shared with
+  Linux, below: `DesktopEditor.cpp` = the SwiftUI panel's layout redrawn
+  in GDI+, `TextCache` for outlines, parameter values polled like
+  SynthModel) + `Source/WindowsEditor.cpp` = its Win32 window (static
+  layer cached in a bitmap, dynamic parts redrawn in the invalid rect
+  only, the name field's EDIT control, common dialogs, WinHTTP),
   `WindowsThemeEditor.hpp` (ThemeDialog as a window), `WindowsModule.hpp`
   (window classes on OUR module, unregistered with the last window),
   `WindowsTrash.cpp` (Recycle Bin; false where Windows cannot recycle),
   `WindowsStorage.hpp` / `StorageSelection.hpp` (folders, portable mode),
   `WindowsPresetIndex.hpp` (bank index cache, rescanned in the background
-  on every editor / browser open), zoom, `WindowsPrompt.hpp`. The browser
+  on every editor / browser open), zoom (settings.json
+  `windowsEditorWidth`: menu sizes / the panel's corner grip saved at once,
+  the HOST's frame resizes only after the editor's first second (hosts
+  send their own default on open) and once they stop, 400 ms or on close),
+  `WindowsPrompt.hpp`. The browser
   is the mac's (no favourites: removed), incl. drag and drop.
   Windows-only code in shared files stays under `#if defined(_WIN32)` /
   `SMTG_OS_WINDOWS`.
+- `DesktopEditor/` — the ONE editor of Windows and Linux: a panel change
+  is made once here (and in SwiftUI). Written against Win32 + GDI+;
+  `DesktopEditor.hpp` lists the "platform" members each window file
+  defines (open / close the window, invalidate, name field, dialogs,
+  update check, theme editor...), plus a Windows and a Linux section.
+- `Linux_Build/` — Linux VST3 (x86_64 / aarch64): CMake (system zlib,
+  X11 + cairo + fontconfig via pkg-config; `OXO_LINUX_EDITOR=OFF` = no
+  editor), `build_linux.sh` (-> `~/.vst3`). `Source/LinuxEditor.cpp` =
+  DesktopEditor's X11 window: a child of the host's window, events + the
+  50 ms timer from the host's `Linux::IRunLoop` (REAPER, Bitwig, Ardour,
+  Carla; Wayland hosts embed through XWayland), cairo double buffer,
+  the name field drawn in the panel. `LinuxGdiplus.hpp` = the GDI+
+  subset the panel uses, on cairo (Segoe UI / Consolas stand-ins
+  condensed to their widths: labels and LCD columns fit as designed).
+  `LinuxPlatform.hpp` = the Win32 names the panel calls (no X11: the
+  shared header includes it) + zenity / kdialog dialogs, xdg-open,
+  FileManager1 reveal, curl update check; `LinuxX11.hpp` = the popup
+  menu; `LinuxThemeEditor.hpp`; `LinuxTrash.cpp` (freedesktop Trash on
+  the home filesystem, else deleted). NEVER BLOCK THE HOST'S UI THREAD:
+  no loop of our own on Linux (no X11 equivalent of Win32's modal loops,
+  which keep the host's windows alive), or GNOME calls the host "not
+  responding" after ~5 s. So menus and dialogs answer through callbacks
+  (`DesktopEditor::popupMenu` / `messageBox` / `askText` / `chooseFile` /
+  `pickFolder`: on Windows at once, on Linux later): the menu is fed by
+  the run loop's events (its grab makes all input its own), zenity /
+  kdialog run detached and `Dialogs::Poll` (the timer) hands over their
+  answer; meanwhile the panel ignores input (`modal()`), and closing the
+  editor drops both, no callback runs. The dialog is not owned by the
+  host's window (zenity 4 ignores `--attach`), so a click on the host
+  can hide it: while one is open, a veil over the panel says "A dialog
+  is open / Alt+Tab to show it, Esc to close it" (`dialogVeil_`, the
+  timer follows `Dialogs::Busy`); a click on it takes the keyboard (given
+  back with the veil); Esc = `Dialogs::Close` (as cancelled). Keeping it above the host (`_NET_WM_PID` →
+  `WM_TRANSIENT_FOR`, zenity forced to `GDK_BACKEND=x11`, kdialog
+  `QT_QPA_PLATFORM=xcb` + `--attach`) = still to do, test GNOME / KDE. Data = `$XDG_CONFIG_HOME/<data
+  folder>`, library = the desktop's Documents (`XDG_DOCUMENTS_DIR` in
+  user-dirs.dirs, else ~/Documents). Compile check of our Linux files:
+  `-Wall -Wextra` clean, GCC 12+.
 - `docs/images/` — README pictures (`synth2_preview.jpg`).
 - `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
   `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: auwrapper hidden
@@ -310,6 +366,21 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   `tools/win_check/check.sh` compile-checks the Windows sources with
   mingw-w64 (`brew install mingw-w64`; warnings = errors; the worktree's
   SDK or `VST3SDK=<path>`). `.bat` files are CRLF (`.gitattributes`).
+- LINUX RELEASE: GitHub Actions > "Linux release" > Run workflow (on the
+  tag; manual only) → artifacts `<Product>-<ver>-<build>-Linux.tar.gz` +
+  `.sha256` (not zipped): ONE bundle with `Contents/x86_64-linux` +
+  `aarch64-linux`, `install.sh` (~/.vst3, `--system`, `--uninstall`),
+  `README.txt`. Each arch builds natively (`ubuntu-24.04`, `-arm`) in a
+  DEBIAN 12 container = the glibc floor (2.36; a newer build machine
+  raises it: `build` fails above `OXO_MAX_GLIBC`), static libstdc++ /
+  libgcc, a version script exporting only GetPluginFactory / ModuleEntry /
+  ModuleExit (no C++ symbol may bind to the host's libstdc++; checked).
+  `tools/prepare_linux_installer build` (per arch: own dir
+  `dist/linux/build-<arch>`, bundle checks, validator with a temporary
+  HOME, EngineCoreTests) / `package <dirs>` (merge, Resources must match)
+  run the same on any Linux box (`podman run -v $PWD:/src debian:12`).
+  Actions pinned by commit SHA. "Run workflow" only lists workflows on the
+  default branch; from there it runs on any branch or tag.
 - WINDOWS INSTALLER: `tools\prepare_win_installer.bat [--skip-build]
   [--skip-validator] [--msvc] [--dynamic-crt] [--no-pause]` on Windows (+
   Inno Setup 6.3+, `winget install JRSoftware.InnoSetup`) →
@@ -329,6 +400,11 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   Identity / version from `Identity.xcconfig` (+ local), passed as `/D`.
   Signing optional, env `OXO_WIN_SIGN_SHA1` or `OXO_WIN_SIGN_PFX` (+
   `_PASSWORD`), `OXO_WIN_SIGN_TIMESTAMP_URL`; dll signed, then the exe.
+  CI: GitHub Actions > "Windows release" > Run workflow (manual only,
+  `windows-2025`, pinned: VS 2022 clang-cl + Inno Setup preinstalled) runs
+  the script with `--no-pause`, UNSIGNED → artifacts `<name>.zip` +
+  `.zip.sha256` + `.exe` (full build / validator logs on failure). Like the
+  Linux one, "Run workflow" lists it only once the file is on master.
 - MAC INSTALLER: `tools/prepare_mac_installer [--skip-build]
   [--skip-notarize]` → `dist/mac/OxoSynth2-<ver>-<build>-macOS.{pkg,dmg}`
   (gitignored). Components `auv2` + `vst3` (pkg ids
@@ -341,21 +417,23 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   notarization is the default. Under a sandbox `pkgbuild` prints `write:
   Permission denied` lines but succeeds. While testing the pkg, remove the
   ~/Library dev copies (same UIDs twice).
-- UPDATE CHECK (mac + Windows): menu > "Check for updates…" (after a
+- UPDATE CHECK (mac + Windows + Linux): menu > "Check for updates…" (after a
   divider) fetches `https://<OXO_VENDOR_WEBSITE>/releases.json` (`{
   products: { <slug>: { page, mac: { version, build, url }, win: … } } }`),
   looks up `OXO_UPDATE_PRODUCT` (empty = no menu entry: forks, iPad, tools)
-  + its platform (`mac` / `win`), compares with this build: newer = higher
+  + its platform (`mac` / `win` / `linux`), compares with this build: newer = higher
   BUILD only (the version is only shown), absent entry = latest. Mac: Swift
   `UpdateCheck` (CFBundleShortVersionString / CFBundleVersion), in-panel
   `UpdateDialog`. Windows: `EditorCore/UpdateCheck.hpp` (same rules and
   texts, `UpdateCheckTests` compares them with the Swift file) +
   `Windows_Build/Source/WindowsHttp.hpp` (WinHTTP GET on a worker that
   closing the editor cancels and joins: no thread outlives the plugin), LCD
-  "Checking…", then a message box ("Open the download page?").
+  "Checking…", then a message box ("Open the download page?"). Linux:
+  the same DesktopEditor code, the GET = `curl` run by
+  `Linux_Build/Source/LinuxPlatform.hpp` (same cancel / join rule).
   RELEASES: one version line for every platform (Identity.xcconfig; one
   build number = one commit, tag it, never reused); releasing a platform =
-  set THAT platform's entry (`oxo_synth2: mac:` / `win:`) in the
+  set THAT platform's entry (`oxo_synth2: mac:` / `win:` / `linux:`) in the
   oxo-music.com site's `config/releases.yml`, leave the others: platforms
   may sit on different builds, each check reads only its own entry.
 
@@ -707,9 +785,33 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   / EQ / Delay / Chorus / Voice right). Knobs: vertical drag (Shift fine),
   double-click = INIT value, wheel (full range = 1440 pt, Shift 6x finer;
   displays / radios 33 pt per step; one host gesture per burst, ends after
-  0.4 s idle). Type / dst / range buttons: click = next, Shift-click =
-  back. ctrl src / assign = pop-up menus. Effect type = in-panel 2 x 5 grid
-  (`EffectTypeMenu`); phaser level reads feedback %. First click acts in
+  0.4 s idle). WHEEL RULES (mac + Windows + Linux; the iPad has no wheel): up =
+  value up, clamped, in the DEVICE's direction (mac `deviceDeltaY`:
+  natural scrolling ignored, browser lists keep it). Windows / Linux get
+  no such flag (natural scrolling, driver / vendor reversers and VMs flip
+  the events before we see them), so Menu > "Invert mouse wheel" (after
+  Themes..., all three desktops, not the iPad) flips the VALUE wheels,
+  never the lists: `invertMouseWheel` in settings.json, one value per
+  process (`storage::InvertWheel`, hooks `invertWheel` / `setInvertWheel`:
+  every open editor follows at once). Ignored on toggles,
+  type / dst / range buttons, the ctrl src / assign menus and the VERTICAL
+  LED lists (filter / arp type / range, LFO dst, voice mode); horizontal
+  LEDs (sub oct, m.env dest), wave grids and every display step.
+  INERTIA never jumps controls: mac = the last direct gesture's control
+  owns the momentum tail (`WheelMonitor.momentumOwner`); Windows (no
+  momentum flag) = a run of events < 300 ms apart belongs to the target
+  under its first event, events over anything else are dropped
+  (`DesktopEditor::wheel` / `wheelTarget`). Type /
+  dst / range buttons: click = next, Shift-click = back. ctrl src /
+  assign = pop-up menus (src: pitch bend, ch pressure + 4 sub-menus "CC
+  0–31".. of "#n:name" items; assign: none + Synth1's list in one column;
+  Windows: the same items as native popups, + check marks). Effect / delay / chorus type and the LFO shapes:
+  a click opens a pick list under the display (`TypeMenu`, effect = 2 x 5
+  grid, LFO shapes Synth1's 2 x 3 (saw / tri / sine | square / S&H /
+  smooth, `lfoShapeOrder`), `SynthModel.typeMenu` = the open id; Windows: the same in-panel
+  list drawn in GDI+, `DesktopEditor::typeMenu_` / `drawTypeMenu`, wave
+  icons through `drawWaveShape`, theme display colours);
+  phaser level reads feedback %. First click acts in
   an unfocused window (`acceptsFirstMouse`).
 - INIT = `EngineCore/InitPatch.hpp` (`kInitPatchValues`, name INIT):
   Initialize patch and the double-click value. Params.hpp defaults stay the
@@ -718,12 +820,14 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 - Bottom LCD: line 1 "NNN:name" (click = browser) + ◀ ▶ (next / previous
   NON-EMPTY slot, rolls over banks), line 2 = bank "NN:name" or a 1.5 s
   readout ("filter freq: 64", learn / library messages). Windows: the
-  same (`WindowsEditor::show` / `flash`: panel edits only, learn, write,
+  same (`DesktopEditor::show` / `flash`: panel edits only, learn, write,
   delete, export, import, all notes off, the library notice 10 s, worded
   "Recycle Bin"). write = write
   dialog; menu = Initialize patch | Load / Save patch file… | MIDI Learn |
-  Program change (checkmark) | All notes off | Themes… | Check for
-  updates… (mac). The version box in the title band
+  Program change (checkmark) | All notes off | Select size ▸ (mac /
+  Windows, = the logo menu's sizes) | Select theme ▸ | Themes… | Check
+  for updates… (mac / Windows). Windows' sizes are 75..300 % of its 770
+  px canvas (`kSizeLevels`), the mac's 75..200 % of 700 pt. The version box in the title band
   opens the GitHub project (`SynthPanelView.projectURL`).
 - BROWSER KEYS (mac, `SynthModel.browserKey`): arrows load at once (up /
   down = ◀ ▶, left / right = next column, nearest slot), Return / Enter /
@@ -732,11 +836,22 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   hidden patches, so a key never loads a patch you cannot see; the LCD's
   ◀ ▶ still walk every non-empty slot.
   Routed by `Synth2HostingView`: local NSEvent monitor + own keyDown; Logic
-  fallback = editor is the front window. Windows: `WindowsEditor::keyDown`
-  (WM_KEYDOWN + `IPlugView::onKeyDown`, WM_GETDLGCODE wants all keys; Ctrl
-  / Alt / Win = the host's): the same keys, plus Return / Enter in the
-  write dialog = Write (the name field forwards Return / Esc); < > and up /
-  down roll over banks in list order. Both: the bottom bar's write clicked
+  fallback = editor is the front window. Windows / Linux: `DesktopEditor::keyDown`
+  (WM_KEYDOWN / X KeyPress + `IPlugView::onKeyDown`; Ctrl / Alt / Win =
+  the host's): the same keys, plus Return / Enter in the write dialog =
+  Write (the name field forwards Return / Esc); < > and up / down roll
+  over banks in list order. KEYBOARD FOCUS (a user report, Studio Pro:
+  a knob click killed the space bar): the panel takes it ONLY for the
+  browser (`takeKeyFocus`: opening it, a click while it is open; a knob
+  never), gives it back on close (`releaseKeyFocus` → `hostFocusWindow`
+  = who had it before, else the host's window), and any key not ours
+  gives it back WITH that key (Windows: reposted to that window, our
+  WM_CHAR dropped; Linux: an XSendEvent copy; the Linux name field keeps
+  all keys). WM_GETDLGCODE: arrows (+ Return / Esc) with the browser
+  open, and always the characters (left to a dialog host, e.g. REAPER's
+  plugin window, a passed-on key's character beeps: no such mnemonic). Linux selects KeyPress only while it has the focus
+  (X gives a key to the window under the pointer). No arrows with the
+  browser closed (the mac has none). Both: the bottom bar's write clicked
   again while the write dialog is open = its Write (save in place: click,
   click).
 - MIDI LEARN: menu > MIDI Learn → every control wears a hotspot (dim =
@@ -753,8 +868,8 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   windows), dragged by its title bar, own colour editor (no system panel),
   `WheelShield` keeps wheel events off the knobs below. 13 colours
   (`ThemeColor`); the rest derives (`Theme` struct, `@Environment(\.theme)`).
-  Factory themes `ThemePalette.factory` (Synth2 = default, Blue, Gray Dark,
-  Gray Light, Red, Warm, JP-8000, JP-8000 Dark, Synth1), then user themes (Save / Delete). The
+  Factory themes `ThemePalette.factory` (Synth2 = default, Synth1, Blue, Gray Dark,
+  Gray Light, Red, Warm, JP-8000, JP-8000 Dark, Artvera - Blues / FL1 / Pastel), then user themes (Save / Delete). The
   palette is PER INSTANCE, stored in the host session (state chunk v4,
   hooks `themeText` / `setThemeText`, VST3 message "OxoTheme"), never in a
   .sy1; changing it also becomes the per-user default for new instances
@@ -783,6 +898,34 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 - TOOLTIPS: only `.oxoTruncationTooltip` on cut patch / bank names in the
   browser (first 0.5 s, then instant while warm); no help tips, no
   `.help()`; hover via `onContinuousHover`.
+- RENDER COST (2026-11-18, user report: Logic's playhead and mouse lagged
+  while the editor was on screen, fine once hidden / moved off-screen; never
+  seen in Live). Logic hosts the editor OUT OF PROCESS
+  (`AUHostingServiceXPC_arrow`) and composites its layer tree again on
+  every panel change; the voice grid changes up to 30x/s while playing.
+  Live loads it in-process: the same cost lands on the GPU and Live never
+  waits for it. Measured: the panel was 1621 CALayers, 361 live `.shadow`
+  layers (a `.shadow` with a CLEAR colour still makes one) and 59 `.blur`
+  filters (knob rims); ~1100 of the layers were knobs (~12 each). Now
+  750 layers, 0 shadow / filter layers, local CPU with the grid at 30 Hz
+  22 % -> 11 %, same pixels. RULES for the panel (SwiftUI): no `.shadow` /
+  `.blur` on anything that is always on screen; a widget with a shadow /
+  glow / blur draws in ONE Canvas with the effect rasterized in
+  (`KnobFace`, `FlatCanvas` + `GraphicsContext.glow` / `strokeBorder` in
+  SynthControls.swift: knobs, button faces, LEDs, wave cells, value
+  displays); prefer one Canvas over a stack of shapes for repeated widgets.
+  Dialogs / menus shown on demand may keep `.shadow`. No `.drawingGroup()`
+  (Metal layers cannot be remoted, Oxo Steps), `.compositingGroup()` did
+  nothing here. How it was found (reuse it): temporary title-band chips each
+  removing one kind of drawing, tested in Logic (culprits: VOI = the
+  trigger, KNB / FX = the cost, POLL = no updates at all; WHL, TXT, BOX,
+  GRAD, LED, compositing group: no effect), then a local bench: the
+  snapshot tool's mock host in an on-screen window, `voiceStates` changed
+  every 33 ms, process CPU via `getrusage` + a walk of the hosting view's
+  layer tree counting layers / `shadowOpacity > 0` / `filters`. Still
+  open, if Logic ever lags again: each grid change makes SwiftUI diff the
+  whole panel (~11 % CPU, 0.4 % without the grid); a native view for
+  the grid (own layer, redraws itself) would remove that.
 - iPad: same panel scaled to fit, centred (HEIGHT MODE). UI WIDTH MODE
   (toggle left of the version box, `UIModeToggle`, lit arrow = the leading
   side): the width leads minus two 40 pt invisible side strips
@@ -1203,7 +1346,11 @@ original AU; keeps both renders for listening).
   D·sin(ωt − θ)), D = (100^(depth/127) − 1)/99, one sine LFO free-running
   from creation, 2.94 Hz·2^((rate−64)/8.89), rate 0 = 0.01 Hz; types 1–3
   L→L / R→R (R θ 0° type 1, 90° types 2 = 3), type 4 L→L 0°, R→L 90°, L→R
-  180°, R→R 270°; comb feedback 0.99·(fb−64)/64; wet = level/127, dry
+  180°, R→R 270°; Synth1's panel offers 1 / 2 / 4 only ("x1 / x2 / x4",
+  its AU 3 steps): ours too (`Offered` / `OfferedStep` in Params.hpp,
+  Swift mirror `SynthModel.offered` / `stepped`: lists, wheel, drag skip
+  3, a loaded 3 reads "x2"; the parameter keeps 1..4 for automation), no
+  factory patch uses 3; comb feedback 0.99·(fb−64)/64; wet = level/127, dry
   unity. Base delay = WHOLE samples (`Chorus::TimeSamples`, measured
   table at 44.1 kHz, 30 ms at 127; 96 kHz = the same delays rounded).
   The comb adds the CURRENT tap (echoes every base delay exactly).

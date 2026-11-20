@@ -50,7 +50,8 @@ public protocol SynthHost: AnyObject {
     /// that slot, -1 = the bank is full, -2 = failed.
     func copyPatch(bank: Int, slot: Int, to: Int) -> Int
     /// Browser > Delete bank: its folder to the Trash (mac) / deleted (iPad).
-    func deleteBank(_ bank: Int) -> Bool
+    /// 0 = failed, 1 = in the Trash, 2 = deleted (no Trash there).
+    func deleteBank(_ bank: Int) -> Int
     /// Browser > Export bank: copies the bank as a new folder into `dir`;
     /// returns that folder, "" = failed.
     func exportBank(_ bank: Int, to dir: String) -> String
@@ -102,6 +103,9 @@ public protocol SynthHost: AnyObject {
     /// Menu > Program change: MIDI program changes played (true) or
     /// ignored; a per-user preference, saved by the wrapper.
     var programChange: Bool { get set }
+    /// Menu > Invert mouse wheel (mac only): value wheels turn the other
+    /// way; a per-user preference shared by every instance.
+    var invertWheel: Bool { get set }
 }
 
 /// The voice grid's feed, apart from SynthModel so a 30 Hz change only
@@ -444,14 +448,25 @@ final class SynthModel: ObservableObject {
     @Published private(set) var themeRevision = 0
     /// The "Synth2" logo's menu (UI sizes + themes), mac VST3 / AUv2 only.
     @Published var showLogoMenu = false
-    /// Effect type pick list (a click on its display; Synth1's 2 x 5 menu).
-    @Published var showEffectMenu = false
+    /// The open type pick list (a click on its display): the parameter id,
+    /// effect / delay / chorus type or an LFO shape (`TypeMenu`).
+    @Published var typeMenu: Int?
     /// Menu > Program change (checkmark): MIDI program changes played.
     @Published var programChange = false {
         didSet {
             guard programChange != oldValue else { return }
             host.programChange = programChange
             flash(programChange ? "program change: on" : "program change: off")
+        }
+    }
+    /// Menu > Invert mouse wheel (checkmark): knobs, buttons and displays
+    /// turn the other way (on top of `deviceDeltaY`, for what macOS does
+    /// not report: wheel reversers, VMs); scrolled lists are not affected.
+    @Published var invertWheel = false {
+        didSet {
+            guard invertWheel != host.invertWheel else { return } // poll: another instance's change
+            host.invertWheel = invertWheel
+            flash(invertWheel ? "invert mouse wheel: on" : "invert mouse wheel: off")
         }
     }
     /// Menu > Check for updates: the dialog's state, nil = closed.
@@ -489,6 +504,7 @@ final class SynthModel: ObservableObject {
         learnTable = (0..<Self.paramCount).map { host.midiCC($0) }
         patchName = host.patchName
         programChange = host.programChange
+        invertWheel = host.invertWheel
         serial = host.patchSerial
         palette = ThemePalette(stateText: host.themeText) ?? ThemeStore.shared.startPalette()
         host.setThemeText(palette.stateText)
@@ -546,6 +562,8 @@ final class SynthModel: ObservableObject {
         let loading = host.libraryScanning
         if loading != libraryLoading { libraryLoading = loading }
         if loading { libraryScan = host.libraryScanProgress }
+        let invert = host.invertWheel
+        if invert != invertWheel { invertWheel = invert }
         let voiceStates = host.voiceStates
         if voiceStates != voices.states { voices.states = voiceStates }
         let now = Date()
@@ -623,10 +641,32 @@ final class SynthModel: ObservableObject {
 
     /// Next / previous choice, wrapping (Synth1's type / dst buttons).
     func cycle(_ id: Int, _ delta: Int, gesture: Bool = true) {
+        guard delta != 0 else { return }
         let r = host.range(id)
         let n = r.max - r.min + 1
-        let v = r.min + ((values[id] - r.min + delta) % n + n) % n
+        var v = values[id]
+        repeat { v = r.min + ((v - r.min + delta) % n + n) % n } while !Self.offered(id, v)
         if gesture { setOnce(id, v) } else { set(id, v) }
+    }
+
+    /// Values no control offers (Params.hpp `Offered`): chorus type 3, a
+    /// duplicate of 2 that Synth1's panel never shows.
+    static func offered(_ id: Int, _ v: Int) -> Bool { !(id == 64 && v == 3) }
+
+    /// Params.hpp `OfferedStep`: `steps` offered values away from `v`,
+    /// clamped; an unoffered `v` counts as the offered value below it.
+    func stepped(_ id: Int, from v: Int, by steps: Int) -> Int {
+        let r = host.range(id)
+        var x = min(max(v, r.min), r.max)
+        while x > r.min && !Self.offered(id, x) { x -= 1 }
+        let dir = steps > 0 ? 1 : -1
+        for _ in 0..<abs(steps) {
+            var y = x + dir
+            while y >= r.min && y <= r.max && !Self.offered(id, y) { y += dir }
+            guard y >= r.min && y <= r.max else { break }
+            x = y
+        }
+        return x
     }
 
     /// Mouse wheel: one host gesture per burst (ends 0.4 s after the last
@@ -635,7 +675,7 @@ final class SynthModel: ObservableObject {
         guard steps != 0 else { return }
         if wheelEnds[id] == nil { host.beginEdit(id) }
         wheelEnds[id] = Date().addingTimeInterval(0.4)
-        set(id, values[id] + steps)
+        set(id, stepped(id, from: values[id], by: invertWheel ? -steps : steps))
     }
 
     func show(_ id: Int) { flash("\(host.displayName(id)): \(host.format(id, values[id]))") }
@@ -892,15 +932,15 @@ final class SynthModel: ObservableObject {
     /// arrows move through the browsed bank's grid and load at once (up /
     /// down = previous / next patch like ◀ ▶, left / right = the neighbouring
     /// column, nearest non-empty slot), Return / Enter / Esc close. Esc also
-    /// closes the logo / effect type menus. False = not ours: the host keeps the key.
+    /// closes the logo / type menus. False = not ours: the host keeps the key.
     func browserKey(_ key: BrowserKey) -> Bool {
         if update != nil, key == .escape || key == .confirm {
             update = nil
             return true
         }
-        if showLogoMenu || showEffectMenu, key == .escape {
+        if showLogoMenu || typeMenu != nil, key == .escape {
             showLogoMenu = false
-            showEffectMenu = false
+            typeMenu = nil
             return true
         }
         guard showBrowser else { return false }
@@ -1047,13 +1087,13 @@ final class SynthModel: ObservableObject {
         bankToDelete = nil
         guard let b = banks.firstIndex(where: { $0.id == id }), !banks[b].readOnly else { return }
         let name = banks[b].name
-        let ok = host.deleteBank(b)
+        let result = host.deleteBank(b)
         loadLibrary()
         if loadedBankID == id { // the sound plays on, out of no bank (the host forgot it too)
             currentProgram = nil
             loadedBankID = nil
         }
-        flash(ok ? "bank \(name) \(Self.deletedWord)" : "delete failed")
+        flash(result == 0 ? "delete failed" : "bank \(name) \(result == 1 ? "moved to Trash" : "deleted")")
     }
 
     /// Browser drag and drop within the shown bank: move, or swap with an

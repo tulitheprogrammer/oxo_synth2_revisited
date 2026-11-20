@@ -164,12 +164,12 @@ extension View {
     func learnable(_ model: SynthModel, _ id: Int) -> some View { modifier(Learnable(model: model, id: id)) }
 
     /// Wheel over a stepped control (displays, radios): 33 pt per step.
-    func displayWheel(_ model: SynthModel, _ id: Int, remainder: Binding<Double>) -> some View {
+    func displayWheel(_ model: SynthModel, _ id: Int, remainder: Binding<Double>, enabled: Bool = true) -> some View {
         #if os(macOS)
         return onMouseWheel { event in
-            guard !model.showBrowser, !model.learnActive else { return false }
+            guard enabled, !model.showBrowser, !model.learnActive else { return false }
             var r = remainder.wrappedValue
-            let steps = WheelFeel.displaySteps(deltaY: Double(event.scrollingDeltaY), remainder: &r)
+            let steps = WheelFeel.displaySteps(deltaY: Double(event.deviceDeltaY), remainder: &r)
             remainder.wrappedValue = r
             model.wheel(id, steps: steps)
             return true
@@ -204,28 +204,9 @@ struct KnobView: View {
         let r = model.host.range(id)
         let v = model.values[id]
         let frac = Double(v - r.min) / Double(max(1, r.max - r.min))
-        let sz = size * scale
         VStack(spacing: 1 * scale) {
-            ZStack {
-                // Oxo Simple's 11-dot ring over the -140..+140 travel, at
-                // 1.3 x the body radius, pulled in 1.5 pt.
-                ForEach(0..<11, id: \.self) { i in
-                    Circle().fill(theme.knobTicks).frame(width: 1.6 * scale, height: 1.6 * scale)
-                        .offset(y: -sz * 0.65 + 1.5 * scale)
-                        .rotationEffect(.degrees(-140 + 28 * Double(i)))
-                }
-                ZStack {
-                    Circle().fill(RadialGradient(colors: [theme.knobGradient, theme.knobBody], center: .init(x: 0.35, y: 0.3),
-                                                 startRadius: 0, endRadius: sz * 0.6))
-                    // soft rim: dim, slightly blurred edge instead of a hard ring
-                    Circle().strokeBorder(theme.knobRim.opacity(0.45), lineWidth: 1.6).blur(radius: 0.7)
-                    Capsule().fill(theme.knobDial).frame(width: 2 * scale, height: sz * 0.36).offset(y: -sz * 0.24)
-                        .rotationEffect(.degrees(-140 + 280 * frac))
-                }
-                .shadow(color: .black.opacity(0.3), radius: 1, x: 1, y: 1)
-            }
-            .frame(width: sz, height: sz)
-            .contentShape(Circle().scale(1.3))
+            KnobFace(theme: theme, size: size, frac: frac)
+                .contentShape(Circle().scale(1.3))
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     guard !resetHeld else { return }
@@ -257,7 +238,7 @@ struct KnobView: View {
             #if os(macOS)
             .onMouseWheel { event in
                 guard !model.showBrowser, !model.learnActive else { return false }
-                let steps = WheelFeel.knobSteps(deltaY: Double(event.scrollingDeltaY), span: r.max - r.min,
+                let steps = WheelFeel.knobSteps(deltaY: Double(event.deviceDeltaY), span: r.max - r.min,
                                                 shift: event.modifierFlags.contains(.shift), remainder: &wheelRemainder)
                 model.wheel(id, steps: steps)
                 return true
@@ -267,6 +248,94 @@ struct KnobView: View {
                 .frame(height: 12 * scale)
         }
         .learnable(model, id)
+    }
+}
+
+// MARK: - Flat drawing
+
+/// ONE `Canvas` per widget. SwiftUI `.blur` / `.shadow` each become a live
+/// CoreAnimation filter on their own layer (even with a clear colour);
+/// Logic's out-of-process editor host composites all of them again on every
+/// panel change (the voice grid while playing), so Logic's own UI lagged.
+/// `Canvas`'s `GraphicsContext` filters rasterise with the widget instead.
+/// `bleed` = room the glow may draw past the frame on each side; `draw`
+/// receives the frame's own rect.
+struct FlatCanvas: View {
+    let bleed: CGFloat
+    let draw: (inout GraphicsContext, CGRect) -> Void
+
+    var body: some View {
+        Canvas { ctx, size in
+            draw(&ctx, CGRect(origin: .zero, size: size).insetBy(dx: bleed, dy: bleed))
+        }
+        .padding(-bleed)
+    }
+}
+
+extension GraphicsContext {
+    /// SwiftUI's `.shadow(color:radius:)` glow under `path`.
+    func glow(_ path: Path, _ color: Color, radius: CGFloat) {
+        var g = self
+        g.addFilter(.shadow(color: color, radius: radius))
+        g.fill(path, with: .color(color))
+    }
+
+    /// `strokeBorder` for a rounded rectangle: the line sits inside `r`.
+    func strokeBorder(_ r: CGRect, cornerRadius: CGFloat, _ color: Color, lineWidth: CGFloat) {
+        let h = lineWidth / 2
+        stroke(Path(roundedRect: r.insetBy(dx: h, dy: h), cornerRadius: max(0, cornerRadius - h)),
+               with: .color(color), lineWidth: lineWidth)
+    }
+}
+
+/// Knob body + tick ring + pointer, in ONE Canvas (see FlatCanvas):
+/// the body's shadow and the rim's blur would otherwise be live layers.
+private struct KnobFace: View {
+    let theme: Theme
+    let size: CGFloat
+    let frac: Double
+    @Environment(\.scale) private var scale
+
+    var body: some View {
+        let sz = size * scale
+        // ticks reach 0.65 x size from the centre, the shadow ~3 pt past the body
+        let side = (sz * 0.65 + 3 * scale) * 2
+        Canvas { ctx, box in
+            let c = CGPoint(x: box.width / 2, y: box.height / 2)
+            // Oxo Simple's 11-dot ring over the -140..+140 travel, at
+            // 1.3 x the body radius, pulled in 1.5 pt.
+            let tick = sz * 0.65 - 1.5 * scale
+            let dot = 1.6 * scale
+            for i in 0..<11 {
+                let a = (-140 + 28 * Double(i)) * .pi / 180
+                let p = CGPoint(x: c.x + tick * sin(a), y: c.y - tick * cos(a))
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - dot / 2, y: p.y - dot / 2, width: dot, height: dot)),
+                         with: .color(theme.knobTicks))
+            }
+            let body = CGRect(x: c.x - sz / 2, y: c.y - sz / 2, width: sz, height: sz)
+            ctx.drawLayer { k in
+                k.addFilter(.shadow(color: .black.opacity(0.3), radius: scale, x: scale, y: scale))
+                k.fill(Path(ellipseIn: body), with: .radialGradient(
+                    Gradient(colors: [theme.knobGradient, theme.knobBody]),
+                    center: CGPoint(x: body.minX + 0.35 * sz, y: body.minY + 0.3 * sz),
+                    startRadius: 0, endRadius: sz * 0.6))
+                // soft rim: dim, slightly blurred edge instead of a hard ring
+                k.drawLayer { rim in
+                    rim.addFilter(.blur(radius: 0.7 * scale))
+                    rim.stroke(Path(ellipseIn: body.insetBy(dx: 0.8 * scale, dy: 0.8 * scale)),
+                               with: .color(theme.knobRim.opacity(0.45)), lineWidth: 1.6 * scale)
+                }
+                var dial = k
+                dial.translateBy(x: c.x, y: c.y)
+                dial.rotate(by: .degrees(-140 + 280 * frac))
+                let h = sz * 0.36
+                dial.fill(Path(roundedRect: CGRect(x: -1 * scale, y: -sz * 0.24 - h / 2,
+                                                   width: 2 * scale, height: h), cornerRadius: 1 * scale),
+                          with: .color(theme.knobDial))
+            }
+        }
+        .frame(width: side, height: side)
+        .frame(width: sz, height: sz)
     }
 }
 
@@ -285,9 +354,12 @@ struct ToggleButton: View {
     var body: some View {
         let on = model.values[id] != 0
         HStack(spacing: 3 * scale) {
-            RoundedRectangle(cornerRadius: 1).fill(on ? theme.ledOn : theme.ledOff)
-                .frame(width: 5 * scale, height: 5 * scale)
-                .shadow(color: on ? theme.ledOn.opacity(0.9) : .clear, radius: 2)
+            FlatCanvas(bleed: 4 * scale) { ctx, r in
+                let led = Path(roundedRect: r, cornerRadius: 1 * scale)
+                if on { ctx.glow(led, theme.ledOn.opacity(0.9), radius: 2 * scale) }
+                ctx.fill(led, with: .color(on ? theme.ledOn : theme.ledOff))
+            }
+            .frame(width: 5 * scale, height: 5 * scale)
             Text(title).oxoFont(10, .semibold).foregroundColor(Theme.buttonText).lineLimit(1).fixedSize()
         }
         .frame(width: width * scale, height: 17 * scale)
@@ -409,15 +481,19 @@ struct LedRadio: View {
                 .onTapGesture { model.setOnce(id, option.value) }
             }
         }
-        .displayWheel(model, id, remainder: $wheelRemainder)
+        .displayWheel(model, id, remainder: $wheelRemainder, enabled: horizontal)
         .learnable(model, id)
     }
 
     private func led(_ on: Bool) -> some View {
-        Circle().fill(on ? theme.radioOn : theme.radioOff)
-            .overlay(Circle().strokeBorder(Color.black.opacity(0.5), lineWidth: 0.5))
-            .shadow(color: on ? theme.radioOn.opacity(0.9) : .clear, radius: 2.5)
-            .frame(width: 7 * scale, height: 7 * scale)
+        FlatCanvas(bleed: 5 * scale) { ctx, r in
+            let led = Path(ellipseIn: r)
+            if on { ctx.glow(led, theme.radioOn.opacity(0.9), radius: 2.5 * scale) }
+            ctx.fill(led, with: .color(on ? theme.radioOn : theme.radioOff))
+            ctx.stroke(Path(ellipseIn: r.insetBy(dx: 0.25 * scale, dy: 0.25 * scale)),
+                       with: .color(.black.opacity(0.5)), lineWidth: 0.5 * scale)
+        }
+        .frame(width: 7 * scale, height: 7 * scale)
     }
 }
 
@@ -491,15 +567,16 @@ private struct WaveCell: View {
     @Environment(\.scale) private var scale
 
     var body: some View {
-        Canvas { ctx, size in
-            let r = CGRect(origin: .zero, size: size).insetBy(dx: 4 * scale, dy: 3.5 * scale)
-            ctx.stroke(icon.path(in: r), with: .color(on ? Color.black : Color(white: 0.85)),
+        FlatCanvas(bleed: 4 * scale) { ctx, cell in
+            let face = Path(roundedRect: cell, cornerRadius: 2 * scale)
+            if on { ctx.glow(face, theme.waveOn.opacity(0.6), radius: 2 * scale) }
+            ctx.fill(face, with: .color(on ? theme.waveOn : theme.button))
+            ctx.strokeBorder(cell, cornerRadius: 2 * scale, .black.opacity(0.6), lineWidth: 1)
+            ctx.stroke(icon.path(in: cell.insetBy(dx: 4 * scale, dy: 3.5 * scale)),
+                       with: .color(on ? Color.black : Color(white: 0.85)),
                        style: StrokeStyle(lineWidth: 1.3 * scale, lineCap: .round, lineJoin: .round))
         }
         .frame(width: width * scale, height: height * scale)
-        .background(RoundedRectangle(cornerRadius: 2).fill(on ? theme.waveOn : theme.button))
-        .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.6), lineWidth: 1))
-        .shadow(color: on ? theme.waveOn.opacity(0.6) : .clear, radius: 2)
     }
 }
 
@@ -529,18 +606,20 @@ struct WaveRadio: View {
     }
 }
 
-/// One button showing the current wave, click steps to the next (LFO wave).
-struct WaveCycle: View {
+/// One button showing the current wave; click opens the wave grid.
+struct WaveDisplay: View {
     @ObservedObject var model: SynthModel
     let id: Int
     let icons: [WaveIcon] // index = value - min
+    @State private var wheelRemainder: Double = 0
 
     var body: some View {
         let r = model.host.range(id)
         let i = min(max(model.values[id] - r.min, 0), icons.count - 1)
         WaveCell(icon: icons[i], on: true, width: 26, height: 17)
             .contentShape(Rectangle())
-            .onTapGesture { model.cycle(id, shiftHeld() ? -1 : 1) }
+            .onTapGesture { model.typeMenu = id }
+            .displayWheel(model, id, remainder: $wheelRemainder)
             .learnable(model, id)
     }
 }
@@ -566,15 +645,27 @@ struct ValueDisplay: View {
 
     var body: some View {
         let v = model.values[id]
-        Text(text?(v) ?? model.host.format(id, v))
-            .oxoFont(11, .bold, design: .monospaced)
+        // A Text VALUE (not a modifier chain) so the Canvas can resolve it.
+        let label = Text(text?(v) ?? model.host.format(id, v))
+            .font(.system(size: 11 * scale, weight: .bold, design: .monospaced))
             .foregroundColor(theme.displayText)
-            .shadow(color: theme.displayText.opacity(0.5), radius: 2)
-            .lineLimit(1).minimumScaleFactor(0.6)
-            .frame(width: width * scale, height: 17 * scale)
-            .background(RoundedRectangle(cornerRadius: 2).fill(theme.displayFill))
-            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
-            .contentShape(Rectangle())
+        FlatCanvas(bleed: 0) { ctx, r in
+            ctx.fill(Path(roundedRect: r, cornerRadius: 2 * scale), with: .linearGradient(
+                Gradient(colors: [theme.lcdTop, theme.lcdBottom]),
+                startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
+            ctx.strokeBorder(r, cornerRadius: 2 * scale, .black.opacity(0.7), lineWidth: 1)
+            // the text's glow; long values shrink to fit (down to 60 %)
+            let t = ctx.resolve(label)
+            let w = t.measure(in: CGSize(width: CGFloat.infinity, height: .infinity)).width
+            let k = min(1, max(0.6, r.width / max(1, w)))
+            var g = ctx
+            g.addFilter(.shadow(color: theme.displayText.opacity(0.5), radius: 2 * scale))
+            g.translateBy(x: r.midX, y: r.midY)
+            g.scaleBy(x: k, y: k)
+            g.draw(t, at: .zero, anchor: .center)
+        }
+        .frame(width: width * scale, height: 17 * scale)
+        .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     if dragStart == nil {

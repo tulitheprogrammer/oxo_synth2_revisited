@@ -8,6 +8,11 @@
 
 namespace oxo {
 bool MoveToTrash(const std::filesystem::path &path);
+#if defined(_WIN32) || defined(__linux__)
+// The Recycle Bin / Trash takes items from `path`'s drive
+// (Windows_Build/Source/WindowsTrash.cpp, Linux_Build/Source/LinuxTrash.cpp).
+bool CanRecycle(const std::filesystem::path &path);
+#endif
 }
 
 #ifdef OXO_TRASH_IMPL

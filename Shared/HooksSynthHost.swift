@@ -47,7 +47,7 @@ final class HooksSynthHost: SynthHost {
     func newBank(_ name: String) -> Int { Int(name.withCString { h.newBank(h.ctx, $0) }) }
     func movePatch(bank: Int, from: Int, to: Int) -> Bool { h.movePatch(h.ctx, Int32(bank), Int32(from), Int32(to)) != 0 }
     func copyPatch(bank: Int, slot: Int, to: Int) -> Int { Int(h.copyPatch(h.ctx, Int32(bank), Int32(slot), Int32(to))) }
-    func deleteBank(_ bank: Int) -> Bool { h.deleteBank(h.ctx, Int32(bank)) != 0 }
+    func deleteBank(_ bank: Int) -> Int { Int(h.deleteBank(h.ctx, Int32(bank))) }
     func exportBank(_ bank: Int, to dir: String) -> String { str(dir.withCString { h.exportBank(h.ctx, Int32(bank), $0) }) }
     func importItems(_ paths: String) -> ImportOutcome {
         ImportOutcome(payload: str(paths.withCString { h.importItems(h.ctx, $0) }))
@@ -82,6 +82,10 @@ final class HooksSynthHost: SynthHost {
     var programChange: Bool {
         get { h.programChange(h.ctx) != 0 }
         set { h.setProgramChange(h.ctx, newValue ? 1 : 0) }
+    }
+    var invertWheel: Bool {
+        get { h.invertWheel(h.ctx) != 0 }
+        set { h.setInvertWheel(h.ctx, newValue ? 1 : 0) }
     }
     func loadedProgram() -> (bank: Int, slot: Int)? {
         var bank: Int32 = -1, slot: Int32 = -1

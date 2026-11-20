@@ -89,12 +89,13 @@ struct SynthPanelView: View {
                     .onTapGesture { model.showLogoMenu = false }
                 LogoMenu(model: model, scale: scale).offset(x: 6 * scale, y: 30 * scale)
             }
-            if model.showEffectMenu {
+            if let id = model.typeMenu, let spot = Self.typeMenus[id] {
                 Color.clear.contentShape(Rectangle())
-                    .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
-                    .onTapGesture { model.showEffectMenu = false }
-                // under the effect type display (section x 66 +- 23, y 40 + 8.5)
-                EffectTypeMenu(model: model).offset(x: (548 + 66 - 23) * scale, y: (34 + 40 + 9) * scale)
+                .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
+                .onTapGesture { model.typeMenu = nil }
+                TypeMenu(model: model, id: id, rows: spot.rows, cell: spot.cell,
+                         icons: Self.typeMenuIcons[id], order: spot.order)
+                    .offset(x: spot.origin.x * scale, y: spot.origin.y * scale)
             }
             if let state = model.update {
                 UpdateDialog(model: model, state: state)
@@ -106,6 +107,24 @@ struct SynthPanelView: View {
         .coordinateSpace(name: Self.canvasSpace)
         .environment(\.scale, scale)
     }
+
+    static let lfoShapes: [WaveIcon] = [.sawDown, .tri, .square, .sampleHold, .smooth, .sine]
+    /// Synth1's LFO shape grid, column by column: saw / tri / sine, then
+    /// square / S&H / smooth (values 0..5 = `lfoShapes`).
+    static let lfoShapeOrder = [0, 1, 5, 2, 3, 4]
+
+    /// The type pick lists: canvas top-left = under their display's left
+    /// edge (section origin + display centre - half width, centre y + 9).
+    /// Effect type (78) is Synth1's 2 x 5 grid; the LFO shapes (42 / 47) a
+    /// 2 x 3 grid of wave icons in `lfoShapeOrder`.
+    private static let typeMenus: [Int: (origin: CGPoint, rows: Int, cell: CGSize, order: [Int]?)] = [
+        78: (CGPoint(x: 548 + 66 - 23, y: 34 + 40 + 9), 5, CGSize(width: 46, height: 17), nil),
+        82: (CGPoint(x: 548 + 48 - 14, y: 180 + 32 + 9), 3, CGSize(width: 28, height: 17), nil),
+        64: (CGPoint(x: 548 + 48 - 14, y: 242 + 32 + 9), 3, CGSize(width: 28, height: 17), nil),
+        42: (CGPoint(x: 6 + 42 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17), lfoShapeOrder),
+        47: (CGPoint(x: 6 + 270 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17), lfoShapeOrder),
+    ]
+    private static let typeMenuIcons: [Int: [WaveIcon]] = [42: lfoShapes, 47: lfoShapes]
 
     private func canvas(scale: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
@@ -249,7 +268,7 @@ struct SynthPanelView: View {
         return SectionBox(title: "LFO", width: 312, height: 130) {
             ZStack {
                 Badge(model: model, text: "1", id: 57).at(14, 30)
-                WaveCycle(model: model, id: 42, icons: [.sawDown, .tri, .square, .sampleHold, .smooth, .sine]).at(42, 30)
+                WaveDisplay(model: model, id: 42, icons: Self.lfoShapes).at(42, 30)
                 cycler(41, "dst", 78, 30, w: 32)
                 knob(43, "spd", 30, 62)
                 knob(44, "amt", 76, 62)
@@ -268,7 +287,7 @@ struct SynthPanelView: View {
                     .at(188, 72)
 
                 cycler(46, "dst", 234, 30, w: 32)
-                WaveCycle(model: model, id: 47, icons: [.sawDown, .tri, .square, .sampleHold, .smooth, .sine]).at(270, 30)
+                WaveDisplay(model: model, id: 47, icons: Self.lfoShapes).at(270, 30)
                 Badge(model: model, text: "2", id: 58).at(298, 30)
                 knob(48, "spd", 236, 62)
                 knob(49, "amt", 282, 62)
@@ -351,7 +370,7 @@ struct SynthPanelView: View {
         SectionBox(title: "Effect", width: 216, height: 80) {
             ZStack {
                 toggle(77, "ON", 22, 40, w: 32)
-                display(78, 66, 40, w: 46, cycles: true, onTap: { model.showEffectMenu = true })
+                display(78, 66, 40, w: 46, cycles: true, onTap: { model.typeMenu = 78 })
                 knob(79, "ctl1", 118, 36)
                 knob(80, "ctl2", 154, 36)
                 knob(81, "level", 190, 36)
@@ -375,7 +394,7 @@ struct SynthPanelView: View {
         SectionBox(title: "Tempo Delay", width: 216, height: 58) {
             ZStack {
                 toggle(65, "ON", 17, 32, w: 28)
-                display(82, 48, 32, w: 28, cycles: true)
+                display(82, 48, 32, w: 28, cycles: true, onTap: { model.typeMenu = 82 })
                 knob(35, "time", 84, 30, size: 22)
                 knob(83, "sprd", 111, 30, size: 22)
                 knob(36, "fdbk", 138, 30, size: 22)
@@ -389,7 +408,7 @@ struct SynthPanelView: View {
         SectionBox(title: "Chorus / Flanger", width: 216, height: 58) {
             ZStack {
                 toggle(66, "ON", 17, 32, w: 28)
-                display(64, 48, 32, w: 28, cycles: true)
+                display(64, 48, 32, w: 28, cycles: true, onTap: { model.typeMenu = 64 })
                 knob(52, "time", 84, 30, size: 22)
                 knob(53, "depth", 111, 30, size: 22)
                 knob(54, "rate", 138, 30, size: 22)
@@ -569,23 +588,40 @@ private struct AtPoint: ViewModifier {
     }
 }
 
-/// Effect type pick list under its display (Synth1's 2 columns of 5): a
-/// direct pick instead of cycling through the distortions. Display colours.
-struct EffectTypeMenu: View {
-    private static let id = 78, cell = CGSize(width: 46, height: 17)
+/// Type pick list under its display (effect type: Synth1's 2 columns of 5,
+/// LFO shapes 2 of 3; delay / chorus type: one column): a direct pick
+/// instead of cycling. Display colours; `icons` = wave icons for the values,
+/// `order` = the values column by column (default: the range in order).
+/// Only offered values are listed (`SynthModel.offered`: chorus type 1 / 2
+/// / 4); a loaded unoffered value marks the item it plays as.
+struct TypeMenu: View {
     @ObservedObject var model: SynthModel
+    let id: Int
+    let rows: Int
+    let cell: CGSize
+    var icons: [WaveIcon]?
+    var order: [Int]?
     @Environment(\.theme) private var theme
     @Environment(\.scale) private var scale
     @State private var hovered: Int?
 
     var body: some View {
+        let r = model.host.range(id)
+        let list = order ?? (r.min...r.max).filter { SynthModel.offered(id, $0) }
+        let current = model.stepped(id, from: model.values[id], by: 0)
+        let columns = (list.count + rows - 1) / rows
         HStack(spacing: 0) {
-            ForEach(0..<2, id: \.self) { col in
+            ForEach(0..<columns, id: \.self) { col in
                 VStack(spacing: 0) {
-                    ForEach(0..<5, id: \.self) { row in item(col * 5 + row) }
+                    ForEach(0..<rows, id: \.self) { row in
+                        let k = col * rows + row
+                        if k < list.count { item(list[k], r.min, on: list[k] == current) }
+                    }
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
             }
         }
+        .fixedSize()
         .background(theme.displayFill)
         .overlay(Rectangle().strokeBorder(Color.black.opacity(0.7), lineWidth: 1 * scale))
         .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
@@ -594,22 +630,34 @@ struct EffectTypeMenu: View {
         #endif
     }
 
-    private func item(_ v: Int) -> some View {
-        let on = model.values[Self.id] == v
-        return Text(model.host.format(Self.id, v))
-            .oxoFont(11, .bold, design: .monospaced)
-            .foregroundColor(on ? theme.lcdBottom : theme.displayText)
-            .frame(width: Self.cell.width * scale, height: Self.cell.height * scale)
-            .background(on ? theme.displayText : hovered == v ? theme.displayText.opacity(0.2) : Color.clear)
-            .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5 * scale))
-            .contentShape(Rectangle())
-            .onHover { inside in
-                if inside { hovered = v } else if hovered == v { hovered = nil }
+    private func item(_ v: Int, _ min: Int, on: Bool) -> some View {
+        let ink = on ? theme.lcdBottom : theme.displayText
+        return Group {
+            if let icons, v - min < icons.count {
+                let icon = icons[v - min]
+                Canvas { ctx, size in
+                    let r = CGRect(origin: .zero, size: size).insetBy(dx: 5 * scale, dy: 4 * scale)
+                    ctx.stroke(icon.path(in: r), with: .color(ink),
+                               style: StrokeStyle(lineWidth: 1.3 * scale, lineCap: .round, lineJoin: .round))
+                }
+            } else {
+                Text(model.host.format(id, v))
+                    .oxoFont(11, .bold, design: .monospaced)
+                    .foregroundColor(ink)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
-            .onTapGesture {
-                model.showEffectMenu = false
-                model.setOnce(Self.id, v)
-                model.show(Self.id)
-            }
+        }
+        .frame(width: cell.width * scale, height: cell.height * scale)
+        .background(on ? theme.displayText : hovered == v ? theme.displayText.opacity(0.2) : Color.clear)
+        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5 * scale))
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { hovered = v } else if hovered == v { hovered = nil }
+        }
+        .onTapGesture {
+            model.typeMenu = nil
+            model.setOnce(id, v)
+            model.show(id)
+        }
     }
 }
