@@ -114,11 +114,14 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
 - `Shared/` — SwiftUI editor of the mac (VST3 / AUv2) and iPad (AUv3): `SynthModel.swift`
   (`SynthHost` protocol + model polling the host at 30 Hz; MIDI learn
   state, LCD readout, wheel gestures, browser keys), `HooksSynthHost.swift`
-  (the C hooks as a `SynthHost`), `SynthControls.swift` (widgets: KnobView,
-  ToggleButton (LED), CycleButton, Badge, LedRadio, WaveRadio / WaveCycle,
-  ValueDisplay, MenuDisplay, SectionBox, `.learnable` hotspots),
+  (the C hooks as a `SynthHost`), `SynthControls.swift` (widgets: KnobView
+  (`KnobFace`), ToggleButton (LED), CycleButton, Badge, LedRadio, WaveRadio
+  / WaveCell / WaveDisplay, ValueDisplay, MenuDisplay, SectionBox,
+  `FlatCanvas` = the one-`Canvas` drawing helper, `.learnable` hotspots),
   `SynthPanelView.swift` (the panel on a 770x560 canvas, absolute `.place`
-  / `.position` layout, BottomBar = LCD + write / menu),
+  / `.position` layout, BottomBar = LCD + write / menu; `TypeMenu` = the
+  pick grid a display opens for a value list: effect / delay / chorus type,
+  LFO shape, its `typeMenus` / `typeMenuIcons` tables holding the spot),
   `SynthLibraryViews.swift` (browser, write dialog, iPad file actions),
   `SynthLibrary.swift` (iPad library / factory paths), `SynthTheme.swift`
   (themes, ThemeDialog, LogoMenu), `SynthWheel.swift` (wheel monitor,
@@ -895,6 +898,12 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   `slotDraggable`) must receive it too. **Inside a `Menu`'s `label:` closure
   never use `.oxoFont`** (its extra wrapper view perturbs layout even at scale
   1 = 1 px shifts): inline `.font(.system(size: N * scale, weight: …))`.
+  TEXT IN A CANVAS takes a `Text` VALUE, never the `.oxoFont` modifier chain:
+  `GraphicsContext.resolve` accepts only `Text` / `Image` / `Shading`, so
+  style it with `.font(.system(size: N * scale, …))` first (`ValueDisplay`).
+  Everything drawn into a `FlatCanvas` also multiplies its own geometry by
+  `scale` from `@Environment(\.scale)` — the container's scaling does not
+  reach a `Canvas`'s drawing closure.
 - TOOLTIPS: only `.oxoTruncationTooltip` on cut patch / bank names in the
   browser (first 0.5 s, then instant while warm); no help tips, no
   `.help()`; hover via `onContinuousHover`.
