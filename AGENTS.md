@@ -185,7 +185,9 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   the HOST's frame resizes only after the editor's first second (hosts
   send their own default on open) and once they stop, 400 ms or on close),
   `WindowsPrompt.hpp`. The browser
-  is the mac's (no favourites: removed), incl. drag and drop.
+  is upstream's: banks and slots, menus and drag and drop, but NOT the
+  fork's filter bar / All patches list / stars / tags / colours (those are
+  the SwiftUI browser's; the engine data they write is still read here).
   Windows-only code in shared files stays under `#if defined(_WIN32)` /
   `SMTG_OS_WINDOWS`.
 - `DesktopEditor/` — the ONE editor of Windows and Linux: a panel change
