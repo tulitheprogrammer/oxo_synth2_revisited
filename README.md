@@ -1,170 +1,216 @@
 <p align="center"><img src="docs/images/synth2_preview.jpg" width="400" alt="The Synth2 panel"></p>
 
-# Synth2
+# Tuli Synth2
 
-A free, open-source recreation of **Synth1**, the classic freeware synthesizer by Daichi Laboratory ([website](https://daichilab.sakura.ne.jp/softsynth/index.html)).
+**A fork of [Oxo Synth2](https://github.com/chab/oxo_synth2) by François
+Chabloz ([@chab](https://github.com/chab)).**
 
+> **Almost none of this is my work.** The synth engine, the clean-room
+> measurement of Synth1, the panel, the iPad app, the VST3/AUv2 packaging and
+> the Windows/Linux ports are all **François Chabloz's** (with the Windows and
+> Linux ports contributed by [sl23](https://github.com/sl2365) and
+> [Eufex](https://github.com/eufex)). What this fork adds is the patch browser
+> and some build fixes — listed in [What this fork adds](#what-this-fork-adds).
+> If you want the plugin itself, get the **official build from the original
+> author**, not from here.
 
-Synth1 has been my go-to synth for years, as it has for many musicians, with thousands of patches on the web.
-Sadly, it seems to have been abandoned in recent years. No updates, no email replies. Mac users can keep it on life support with Rosetta, but Rosetta will be gone in macOS 28 (see [this article](https://developer.apple.com/news/?id=w5ngl9k2)).
+Synth2 is a free, open-source recreation of **Synth1**, the classic freeware
+synthesizer by Daichi Laboratory
+([website](https://daichilab.sakura.ne.jp/softsynth/index.html)).
 
-Synth2 aims to keep those sounds playable on modern computers. Open source, so that anyone can keep the project alive in the future.
+Formats: macOS VST3 + AUv2, iPad AUv3, Windows VST3 (x64), Linux VST3
+(x86-64, ARM64).
 
+This fork tracks upstream and currently matches **1.1.8, build 17**. See
+[Credits](#credits) for who made what.
 
-- **Same parameters, same UI:** Some UX improvements (MIDI Learn, themes, etc.), but nothing was changed in the synth engine.
-- **Import patches:** All Synth1 patches (`.sy1` files and zip banks) load just like in Synth1.
-- **Find patches fast:** browser filters by type, star or free-text tags you add, and
-  keeps your marks in one portable `categories.json` you can carry to a new setup (the
-  patches themselves stay plain `.sy1` files).
-- **Carefully modeled with Claude:** Opus 5.5 generated ~ 3 GB of measurement data before modeling every parameter one by one.
+## About the original project
 
-Note: the original Synth1 was studied only through its audio output. The binary was never disassembled or decompiled (see the clean-room rule in [AGENTS.md](AGENTS.md#rules)).
+The text below is **François Chabloz's**, from the
+[upstream README](https://github.com/chab/oxo_synth2), kept here so this fork
+does not misrepresent the project's origins. Note the first-person "I" is
+**his**, not the fork author's.
 
-Formats: macOS VST3 + AUv2, iPad AUv3, Windows VST3 (x64), Linux VST3 (x86-64, ARM64).
-
-This is a fork of [`chab/oxo_synth2`](https://github.com/chab/oxo_synth2) and
-tracks it (currently 1.1.8, build 17). It adds a patch-library browser and a
-few build fixes; see [What this fork adds](#what-this-fork-adds).
+> Synth1 has been my go-to synth for years, as it has for many musicians, with
+> thousands of patches on the web. Sadly, it seems to have been abandoned in
+> recent years. No updates, no email replies. Mac users can keep it on life
+> support with Rosetta, but Rosetta will be gone in macOS 28 (see
+> [this article](https://developer.apple.com/news/?id=w5ngl9k2)).
+>
+> Synth2 aims to keep those sounds playable on modern computers. Open source,
+> so that anyone can keep the project alive in the future.
+>
+> - **Same parameters, same UI:** Some UX improvements (MIDI Learn, themes,
+>   etc.), but nothing was changed in the synth engine.
+> - **Import patches:** All Synth1 patches (`.sy1` files and zip banks) load
+>   just like in Synth1.
+> - **Carefully modeled with Claude:** Opus 5.5 generated ~ 3 GB of
+>   measurement data before modeling every parameter one by one.
+>
+> Note: the original Synth1 was studied only through its audio output. The
+> binary was never disassembled or decompiled (see the clean-room rule in
+> [AGENTS.md](AGENTS.md#rules)).
 
 ## What this fork adds
 
-Everything below is **on top of upstream** (`chab/oxo_synth2`): the synth
-engine, the parameters, the panel and the `.sy1` format are unchanged, so
-patches and projects move between the two freely.
+A better way to find patches. The synth itself, the sound and the patch files
+are untouched — this is about the browser you use to pick a sound.
 
-### Patch browser: categories, stars, tags
+### Find a patch in seconds
 
-A sidecar `categories.json` at the library root adds three ways to find a
-patch, without touching the `.sy1` files themselves:
+Most people have thousands of Synth1 patches and no idea where a given sound
+lives. The browser now has a **filter bar** right above the patch grid:
 
-- **22 categories** (Bass, Lead, Pluck, Pad, Strings, Brass, Keys, Organ,
-  Piano, Bell, Arp, Chord, Sequence, FX, Perc, Vocal, Guitar, Wind, Mallet,
-  Texture, Init, Unclassified). Each patch is classified from its **name** by
-  an ordered rule table, so a fresh library arrives sorted; any patch can be
-  overridden by hand.
-- **Stars** — a favourite flag per patch.
-- **Free-form tags** — as many per patch as you like, so "dark pad" is
-  expressible where a single category is not.
+- **Type something** — it searches patch names, bank names, categories and
+  your tags at once.
+- **Pick a type** — a row of buttons (Bass, Lead, Pad, Pluck, FX…) narrows to
+  just that kind of sound.
+- **Or just your favourites** — one button shows only the patches you starred.
 
-Records are keyed by the **SHA-256 of the patch's bytes**, not its path, so a
-star follows a patch through a bank rename, a copy into another bank, an
-export and an import. Hashing is opt-in: a library nobody has tagged pays
-nothing for it. `⋯ > Export / Import categories and tags…` carries the whole
-store to a new machine; imports merge, and your existing marks win.
-
-<p align="center">
-  <img src="docs/images/fork_tags_dialog.png" width="420" alt="The category and tags dialog: a type picker over the 22 categories, a Starred toggle, and tags with suggestions">
-</p>
-
-### Patch browser: filtering and finding
+Matches stay, everything else disappears, so the grid closes up into a short
+list of real candidates instead of a wall of dimmed out slots. Each bank in
+the sidebar tells you how many of its patches still match, so you can see
+where the hits are before clicking. The patch you're currently playing never
+vanishes from under you.
 
 <p align="center">
   <img src="docs/images/fork_filter_bar.png" width="760" alt="The filter bar: free-text search, one type chip per category, a star-only chip, and bank rows counting matches against their total">
 </p>
 
-- **Filter bar**: free text over patch, bank, category and tag names, one of
-  the 22 type chips, and a star-only chip. Non-matching patches are **hidden**
-  (the grid closes up) rather than dimmed, each bank row shows "matching /
-  total", and the patch you are currently playing never disappears.
-- **All patches** view: every bank in one flat list, narrowed by the same
-  filter — the way to hunt a sound when you do not remember which bank it is
-  in.
+### Browse every patch at once
+
+A new **All patches** row sits at the top of the bank list. Click it and you
+get every patch in your library in one flat list, each labelled with the bank
+it came from — and the filter bar works there too. No more clicking through
+twenty banks looking for that one pad you heard last month.
 
 <p align="center">
   <img src="docs/images/fork_all_patches.png" width="760" alt="The All patches view: every bank in one flat list, each row prefixed with its bank name, starred and coloured patches marked">
 </p>
 
-- **Random patch**: a reservoir sample over whatever the filter lets through,
-  so it hunts undiscovered sounds *inside* the style you are looking for.
-  Reachable from the browser header and the LCD menu, and it works mid-scan.
-- **Find duplicates…**: groups patches whose files are byte-for-byte
-  identical, listing every copy's bank, slot, name and colour. Nothing is
-  deleted automatically.
+### Organise patches your way
+
+Every patch can now be marked three ways, and the marks are yours — they
+never change the patch file:
+
+- **A type** — all 22 kinds, sorted out automatically from the patch name. A
+  fresh library is already in order, and you can correct any patch by hand.
+- **A star** — for the ones you actually reach for.
+- **Tags** — as many as you like, in your own words. "dark", "warm", "short",
+  "for the bridge of that song" — a single category can't say that, tags can.
+
+Right-click any patch and choose **Edit tags…**; **Add star** and the
+**Colour** menu are in the same place.
 
 <p align="center">
-  <img src="docs/images/fork_duplicates.png" width="620" alt="The duplicate patches dialog: sets of identical files, each copy listed with its bank, slot and name">
+  <img src="docs/images/fork_tags_dialog.png" width="420" alt="The category and tags dialog: a type picker over the 22 categories, a Starred toggle, and tags with suggestions">
 </p>
 
-### Patch browser: colours and streaming
+Your marks follow the **patch itself**, not its filename — rename a bank, copy
+a patch into another bank, or export and re-import it, and the tags and stars
+come along. **⋯ > Export / Import categories and tags…** moves all of it to a
+new computer; importing only ever adds to what you already have, so you can't
+lose your own work by importing someone else's.
 
-- **Patch colours**: a patch's colour is Synth1's own `color=` line in the
-  `.sy1`, so it needs no sidecar record and travels with the file. Six names
-  (`default`, `blue`, `red`, `yellow`, `green`, `magenta`); cells are tinted,
-  and a colour this build does not know stays untouched rather than being
-  reset.
+Nothing is hashed or tracked until you mark your first patch, so a library you
+never tag costs nothing.
+
+### Colour-code your patches
+
+Tint a patch blue, red, yellow, green or magenta and it shows up that way in
+the grid and in the All patches list. The colour is Synth1's own `color=` line
+inside the patch file, so it travels with the patch and Synth1 itself sees it
+too. Unfamiliar colours are left alone rather than being reset.
 
 <p align="center">
   <img src="docs/images/fork_colours.png" width="760" alt="Coloured slots in the browser grid: blue, red, yellow and green patches beside default ones">
 </p>
 
-- **Streamed scans**: a large library no longer shows nothing until the whole
-  rescan ends. Banks arrive while the scan runs, already usable, with a
-  "N/M banks · P patches" bar in the header.
+### Stumble on sounds you forgot you had
+
+**Random** picks a patch for you — and it respects whatever filter you've set,
+so "random pad" or "random starred patch" actually works. It lives in the
+browser header and in the LCD menu, and it's a good way to rediscover a
+library you've stopped exploring.
+
+### Clean up duplicates
+
+**⋯ > Find duplicates…** shows you patches whose files are genuinely
+identical — useful after merging several downloaded banks. Every copy is
+listed with its bank and name so you can decide which to keep. Nothing is
+deleted unless you click Delete.
+
+<p align="center">
+  <img src="docs/images/fork_duplicates.png" width="620" alt="The duplicate patches dialog: sets of identical files, each copy listed with its bank, slot and name">
+</p>
+
+### Big libraries open immediately
+
+Opening a library with tens of thousands of patches used to mean staring at
+nothing until the scan finished. Banks now appear as they're read, ready to
+use, with a small "2/3 banks · 7 patches" bar in the header telling you how
+far along it is. You can start playing before it's done.
 
 <p align="center">
   <img src="docs/images/fork_scan_progress.png" width="760" alt="The scan progress bar in the browser header: 2/3 banks, 7 patches, with the banks already streamed in and usable">
 </p>
 
-- **A silent library is now an error**: if the engine's library JSON cannot be
-  decoded, the browser says where and why instead of looking like an empty
-  library. (An older build wrote favourites as numbers where Swift expected
-  booleans, so the whole document failed to decode — both sides now emit and
-  accept booleans.)
+### If something goes wrong, it says so
 
-These are the **mac and iPad** SwiftUI browser's. The Windows and Linux
-editors share the engine, so a library tagged on the mac opens there with its
-marks intact and a written patch keeps its colour, but their panels do not
-draw the filter bar or the star / tag / colour menus yet.
+A browser with no banks used to be ambiguous — was the library empty, or
+broken? If the library can't be read, you now get a message naming what went
+wrong instead of a blank panel.
 
-### Editor scaling
+### Readable at any window size
 
-The panel used to be drawn at its 770×560 design size and upscaled with
-`.scaleEffect`, so text went soft as soon as the window grew past 100 %. Now
-every length, frame and font multiplies a `\.scale` value and text is laid out
-at its final size, so it stays crisp at every UI size (75–200 % on the mac).
+The panel used to be drawn at one size and then scaled up, so text went blurry
+as soon as you enlarged the window. It's now drawn at the size you choose, so
+every label stays sharp from 75 % to 200 %. Pick a size from the menu that
+opens when you click the **Tuli Synth2** name in the title bar — the menu also
+switches themes.
 
 <p align="center">
   <img src="docs/images/fork_ui_sizes.png" width="300" alt="The logo menu's UI size column: 75%, 100%, 115%, 125%, 140%, 150% and 200%, beside the theme column">
 </p>
 
+### Worth knowing
 
-### Build and install
+- The browser additions above are on **macOS and iPad**. On Windows and Linux
+  the plugin reads and writes the same categories, stars, tags and colours —
+  so a library you organise on the Mac opens there with everything intact —
+  but those panels don't yet draw the filter bar or the tag menus.
+- Because the marks live in a separate file next to your patches, deleting
+  that file never damages a patch. Your `.sy1` files are as portable as they
+  were in Synth1.
 
-- **`--global`**: `./build_vst3.sh --global` installs the VST3 into
-  `/Library/Audio/Plug-Ins/VST3` while keeping the AUv2 in
-  `~/Library/Audio/Plug-Ins/Components`. The AU is deliberately kept out of
-  the global folder: a `Components` folder that is a symlink onto an exFAT
-  volume is not scanned by `AudioComponentRegistrar`, so an AU installed there
-  never loads.
-- **exFAT code seals**: exFAT cannot store xattrs, so macOS writes `._NAME`
-  AppleDouble sidecars into the bundle as it is created, and those unsigned
-  files break the seal. `seal_bundle` purges them, signs, and purges again
-  (signing re-creates `._CodeResources`). `rsync --exclude` cannot prevent
-  this — the files appear on write.
-- **`moduleinfo.json` guard**: the file is regenerated when it is missing or
-  0 bytes. An incremental Xcode build can skip the SDK's post-build step,
-  leaving an empty file that hides the plugin from hosts that read it.
+### For developers
 
-### Carried here, but now upstream too
-
-These began as fork fixes, were filed as issues and merged into upstream
-1.1.8 build 17, so they are **not** gaps any more: build and validator logs
-read as text, the AUv2 `AudioComponents` version derived from
-`MARKETING_VERSION`, the AUv2 installed with a real DSP bundle instead of a
-build-tree symlink, and import results reported instead of failing silently.
+Under the hood: a `categories.json` beside the library holds the marks, keyed
+by patch content rather than path; scanning streams banks to the UI through a
+worker thread; and the editor's scale is threaded through every length and
+font instead of a single `scaleEffect`. See `AGENTS.md` for the details.
 
 ## Download
 
-Official builds are published on the Oxo Music website:
+**The official builds are François Chabloz's, and are published on the Oxo
+Music website. That is where you should get the plugin.**
 
 - macOS 14+ (VST3 + AU, signed and notarized): <https://oxo-music.com/products/oxo_synth2>
 - Windows 10+ x64 (VST3): <https://oxo-music.com/products/oxo_synth2>
 - iPad (AUv3): <https://apps.apple.com/us/app/oxo-synth2/id6829692180>
-- Linux x86-64 / ARM64 (VST3): <https://oxo-music.com/products/oxo_synth2> or [build it yourself](#building)
+- Linux x86-64 / ARM64 (VST3): <https://oxo-music.com/products/oxo_synth2>
 
-Thanks to [sl23](https://github.com/sl2365) for the Windows version and [Eufex](https://github.com/eufex) for the Linux version.
+Those are the **upstream** releases. They do **not** include this fork's patch
+browser — for that, build this repository yourself (see [Building](#building));
+no prebuilt fork binaries are published.
+
+Thanks to [sl23](https://github.com/sl2365) for the Windows version and
+[Eufex](https://github.com/eufex) for the Linux version.
 
 ## Relationship to Synth1
+
+> The rest of this section is **François Chabloz's text from the upstream
+> README**, unchanged. The "I" is his.
 
 Synth2 is an independent recreation of Synth1 by Daichi Laboratory. It is
 **not affiliated with or endorsed by** Daichi Laboratory. No Synth1 code,
@@ -180,20 +226,32 @@ loaded for compatibility only; no Synth1 banks are distributed.
 
 > Dear Daichi, if you're reading this: I hope you're well. I'm not trying to take over your project; I'd just love to keep Synth1 patches playable on modern computers. Please [contact me](https://oxo-music.com/support/): if you'd rather this project didn't exist, I'll take it down. Above all, I would love to see YOUR original code released under an open-source license. I'd be happy to maintain it if you're open to it.
 
+### This fork's own position
+
+This fork exists only to add a patch browser. It is **not** an official
+release, is not endorsed by François Chabloz or Daichi Laboratory, and
+publishes no binaries. The clean-room rules above apply here too. Nothing in
+this repository claims any of his work as the fork author's.
+
 ## Building
 
 Get the sources with their submodules (Steinberg's VST3 SDK, Apple's
 AudioUnitSDK):
 
 ```sh
-git clone --recursive https://github.com/chab/oxo_synth2.git
-cd oxo_synth2
+# this fork (includes the patch browser)
+git clone --recursive https://github.com/TuliTheProgrammer/tuli_synth2.git
+cd tuli_synth2
+
+# or upstream, without the fork's additions
+# git clone --recursive https://github.com/chab/oxo_synth2.git
+
 # (already cloned without --recursive: git submodule update --init --recursive)
 ```
 
 A local build keeps the official identity: it replaces an installed Oxo Synth2
-(same IDs). That's fine for development; to distribute builds, see
-[Forks](#forks).
+(same IDs). That's fine for development; to distribute builds, or to install
+this fork beside the official one, see [Forks](#forks).
 
 ### macOS (VST3 + AUv2)
 
@@ -420,14 +478,82 @@ Internal names (`OxoSynth2` targets and files, `Oxo…` message IDs) are not
 visible to users and need no renaming. Keep the state tag `'OXS2'` and the
 `.sy1` format as they are, so projects and patches stay compatible.
 
-## Contributions to this repository
+## Contributions
 
-The scope here is Synth1 and nothing more: the goal is a faithful clone for modern computers, the next best thing to Daichi's own code. Fixes, ports and differences from how the original sounds are welcome. New features belong in forks.
+**Upstream's rule**, which this fork follows: ask first.
 
-If you have a suggestion for this repository, open an issue first, so that we agree on something
-before you spend time on it.
+> The scope here is Synth1 and nothing more: the goal is a faithful clone for
+> modern computers, the next best thing to Daichi's own code. Fixes, ports and
+> differences from how the original sounds are welcome. New features belong in
+> forks.
+>
+> If you have a suggestion for this repository, open an issue first, so that we
+> agree on something before you spend time on it.
 
-## License
+For **this fork**, the patch browser is a new feature, which by upstream's own
+rule does not belong upstream — so it stays here. Anything that does belong
+upstream should go to
+[`chab/oxo_synth2`](https://github.com/chab/oxo_synth2) as a focused pull
+request from a dedicated branch, not from this fork's `master`.
+
+## Installing this fork
+
+A normal `./build_vst3.sh` installs to your user folders and **replaces** an
+installed official build, because it uses the same plugin IDs. That's fine for
+development.
+
+- **`./build_vst3.sh --global`** puts the VST3 in the system-wide
+  `/Library/Audio/Plug-Ins/VST3`, which is where this machine loads it from.
+  The Audio Unit still goes to your user folder on purpose: a global
+  `Components` folder that is a symlink onto an exFAT drive doesn't get picked
+  up by macOS, so an AU installed there would never appear.
+- **To keep both plugins side by side**, give your build its own identity — see
+  [Forks](#forks). A gitignored `Identity.local.xcconfig` does exactly that,
+  which is why this fork's local build shows up as "Tuli Synth2" beside "Oxo
+  Synth2" instead of replacing it.
+
+Two macOS build traps are handled automatically, in case you hit them
+elsewhere:
+
+- **exFAT drives can't store extended attributes**, so macOS litters the
+  bundle with `._name` sidecar files as it's written. Those unsigned files
+  break the app's code signature. The build removes them, signs, then removes
+  them again (signing recreates one), so `codesign --verify` stays clean.
+- **`moduleinfo.json` can silently end up empty** on an incremental Xcode
+  build, hiding the plugin from hosts that read it. It's regenerated whenever
+  it's missing or zero bytes.
+
+### Already given back to upstream
+
+Four fixes written here were sent upstream and are **now part of Oxo Synth2
+1.1.8 build 17**, so they're no longer differences: readable build and
+validator logs, the AU version number derived from the marketing version, the
+AU shipping a real DSP bundle instead of a link into the build folder, and
+import results being reported instead of failing silently.
+
+## Credits
+
+This project is **François Chabloz's work**. This fork would not exist
+without it, and should be judged as a small addition to it.
+
+| Who | What |
+|---|---|
+| **[François Chabloz](https://github.com/chab)** ([oxo-music.com](https://oxo-music.com)) | **Everything that matters:** the Synth2 engine, the clean-room measurement and modelling of Synth1 (the ~3 GB of measurement data), the panel and its themes, MIDI learn, the VST3 / AUv2 / AUv3 packaging, the iPad app, the installers, the release tooling, and the documentation. Also most of the code this fork's patch browser is built on |
+| **[sl23](https://github.com/sl2365)** | The Windows VST3 port |
+| **[Eufex](https://github.com/eufex)** | The Linux VST3 port |
+| **Daichi Laboratory** | Synth1 itself — the instrument this recreates. Not affiliated, not involved, and no Synth1 code, binaries or artwork are used |
+| **Fork author** ([@TuliTheProgrammer](https://github.com/TuliTheProgrammer)) | Only the additions listed in [What this fork adds](#what-this-fork-adds): the categories / tags / colours patch browser, filtering, streamed scans, geometric editor scaling, and a few `build_vst3.sh` fixes. Four small fixes that went upstream were also written here |
+
+The license below is **upstream's, unchanged** — the fork author has added no
+copyright line, because the substance of the project is not theirs. If you
+reuse anything here, credit François Chabloz (and sl23 / Eufex for the
+ports), and link <https://github.com/chab/oxo_synth2>.
+
+Two upstream requests, which this fork respects: no Synth1 bank is bundled
+(`reference/presets/` is local-only and gitignored), and the original Synth1
+is studied only through its audio output.
+
+
 
 The code is under the [MIT License](LICENSE).
 
