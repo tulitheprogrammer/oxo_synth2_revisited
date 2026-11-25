@@ -14,6 +14,22 @@ Chabloz ([@chab](https://github.com/chab)).**
 > If you want the plugin itself, get the **official build from the original
 > author**, not from here.
 
+> ### ⚠️ The fork's additions are macOS and iPad only
+>
+> **If you are on Windows or Linux, this fork has nothing for you.** Every
+> feature described below — the filter bar, categories, stars, tags, colours,
+> the All patches list, random patch, duplicate finding — is part of the
+> **macOS / iPad** (SwiftUI) editor. The Windows and Linux editors are a
+> separate panel and don't draw any of it.
+>
+> Your marks aren't lost by opening the library there: categories, stars and
+> tags live in a separate file those panels never touch, so they're simply
+> invisible until you're back on a Mac. But there is no UI for them, and
+> nothing else here is new.
+>
+> **Windows / Linux users: use [Oxo Synth2 upstream](https://github.com/chab/oxo_synth2)**
+> — it is the same plugin on those platforms.
+
 Synth2 is a free, open-source recreation of **Synth1**, the classic freeware
 synthesizer by Daichi Laboratory
 ([website](https://daichilab.sakura.ne.jp/softsynth/index.html)).
@@ -175,13 +191,11 @@ switches themes.
 
 ### Worth knowing
 
-- The browser additions above are on **macOS and iPad**. On Windows and Linux
-  the plugin reads and writes the same categories, stars, tags and colours —
-  so a library you organise on the Mac opens there with everything intact —
-  but those panels don't yet draw the filter bar or the tag menus.
 - Because the marks live in a separate file next to your patches, deleting
   that file never damages a patch. Your `.sy1` files are as portable as they
   were in Synth1.
+- The additions are **macOS / iPad only** — see the note at the top of this
+  page.
 
 ### For developers
 
