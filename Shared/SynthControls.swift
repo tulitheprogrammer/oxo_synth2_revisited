@@ -39,17 +39,17 @@ struct Theme {
     var waveOn: Color { p[.displayText].color }
     static let red = Color(red: 0.68, green: 0.06, blue: 0.05)
     static let learn = Color(red: 0.35, green: 0.65, blue: 0.91)
-    static let labelFont = Font.system(size: 9.5, weight: .medium)
-    static let buttonFont = Font.system(size: 10, weight: .semibold)
 }
 
 private struct ThemeKey: EnvironmentKey {
     static let defaultValue = Theme(.synth2)
 }
 
-/// The panel's live scale (window width / design width), for menus
-/// that mark the current UI size.
-private struct EditorScaleKey: EnvironmentKey {
+/// The panel's live scale (view points per design point, 1 = 100 %). Set
+/// once by `SynthPanelView.panel(scale:)`; every size and font the panel
+/// draws multiplies by it, so text is laid out at the FINAL size and stays
+/// crisp (a `.scaleEffect` would rasterise at design size and upsample).
+private struct ScaleKey: EnvironmentKey {
     static let defaultValue: CGFloat = 1
 }
 
@@ -58,9 +58,60 @@ extension EnvironmentValues {
         get { self[ThemeKey.self] }
         set { self[ThemeKey.self] = newValue }
     }
-    var editorScale: CGFloat {
-        get { self[EditorScaleKey.self] }
-        set { self[EditorScaleKey.self] = newValue }
+
+    var scale: CGFloat {
+        get { self[ScaleKey.self] }
+        set { self[ScaleKey.self] = newValue }
+    }
+}
+
+/// A text style at the panel's scale (see `\.scale`).
+private struct ScaledFont: ViewModifier {
+    @Environment(\.scale) private var scale
+    let size: CGFloat
+    let weight: Font.Weight
+    let design: Font.Design
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size * scale, weight: weight, design: design))
+    }
+}
+
+/// A height in design points at the panel's scale (see `\.scale`).
+private struct ScaledHeight: ViewModifier {
+    @Environment(\.scale) private var scale
+    let height: CGFloat
+
+    func body(content: Content) -> some View {
+        content.frame(height: height * scale)
+    }
+}
+
+/// A `.frame(width:height:)` in design points, at the panel's scale.
+private struct ScaledFrame: ViewModifier {
+    @Environment(\.scale) private var scale
+    let width: CGFloat
+    let height: CGFloat
+
+    func body(content: Content) -> some View {
+        content.frame(width: width * scale, height: height * scale)
+    }
+}
+
+extension View {
+    /// `.frame(width:height:)` in design points, scaled to the live UI size.
+    func scaleForPanel(_ width: CGFloat, _ height: CGFloat) -> some View {
+        modifier(ScaledFrame(width: width, height: height))
+    }
+
+    /// `.oxoFont()` in design points, scaled to the live UI size.
+    func oxoFont(_ size: CGFloat, _ weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(ScaledFont(size: size, weight: weight, design: design))
+    }
+
+    /// `.frame(height:)` in design points, scaled to the live UI size.
+    func oxoHeight(_ height: CGFloat) -> some View {
+        modifier(ScaledHeight(height: height))
     }
 }
 
@@ -94,7 +145,7 @@ private struct Learnable: ViewModifier {
                         RoundedRectangle(cornerRadius: 4)
                             .strokeBorder(Theme.learn.opacity(selected ? 1 : 0.6), lineWidth: selected ? 2 : 1)
                         if cc != 0 {
-                            Text("\(cc)").font(.system(size: 9, weight: .bold)).foregroundColor(.white)
+                            Text("\(cc)").oxoFont(9, .bold).foregroundColor(.white)
                                 .padding(.horizontal, 3).padding(.vertical, 1)
                                 .background(RoundedRectangle(cornerRadius: 2.4).fill(Theme.learn)
                                     .overlay(RoundedRectangle(cornerRadius: 2.4).strokeBorder(.white.opacity(0.75), lineWidth: 1)))
@@ -112,8 +163,7 @@ private struct Learnable: ViewModifier {
 extension View {
     func learnable(_ model: SynthModel, _ id: Int) -> some View { modifier(Learnable(model: model, id: id)) }
 
-    /// Wheel over a stepped control (displays, radios): 33 pt per step, up =
-    /// value up. `enabled` false = the wheel passes through (vertical LEDs).
+    /// Wheel over a stepped control (displays, radios): 33 pt per step.
     func displayWheel(_ model: SynthModel, _ id: Int, remainder: Binding<Double>, enabled: Bool = true) -> some View {
         #if os(macOS)
         return onMouseWheel { event in
@@ -141,6 +191,7 @@ struct KnobView: View {
     let id: Int
     let label: String
     var size: CGFloat = 24
+    @Environment(\.scale) private var scale
     @State private var dragStart: Int?
     @State private var dragAccum: CGFloat = 0
     @State private var lastY: CGFloat = 0
@@ -153,9 +204,9 @@ struct KnobView: View {
         let r = model.host.range(id)
         let v = model.values[id]
         let frac = Double(v - r.min) / Double(max(1, r.max - r.min))
-        VStack(spacing: 1) {
+        VStack(spacing: 1 * scale) {
             KnobFace(theme: theme, size: size, frac: frac)
-            .contentShape(Circle().scale(1.3))
+                .contentShape(Circle().scale(1.3))
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     guard !resetHeld else { return }
@@ -193,57 +244,98 @@ struct KnobView: View {
                 return true
             }
             #endif
-            Text(label).font(Theme.labelFont).foregroundColor(theme.ink).lineLimit(1).fixedSize()
-                .frame(height: 12)
+            Text(label).oxoFont(9.5, .medium).foregroundColor(theme.ink).lineLimit(1).fixedSize()
+                .frame(height: 12 * scale)
         }
         .learnable(model, id)
     }
 }
 
-/// The knob drawn in ONE Canvas: one layer, its shadow and blurred rim
-/// rasterized with it. As separate shapes with `.shadow` / `.blur` it was
-/// ~12 layers + live CoreAnimation filters per knob, which Logic's
-/// out-of-process editor host composited again on every panel change (the
-/// voice grid while playing): Logic's own UI lagged.
+// MARK: - Flat drawing
+
+/// ONE `Canvas` per widget. SwiftUI `.blur` / `.shadow` each become a live
+/// CoreAnimation filter on their own layer (even with a clear colour);
+/// Logic's out-of-process editor host composites all of them again on every
+/// panel change (the voice grid while playing), so Logic's own UI lagged.
+/// `Canvas`'s `GraphicsContext` filters rasterise with the widget instead.
+/// `bleed` = room the glow may draw past the frame on each side; `draw`
+/// receives the frame's own rect.
+struct FlatCanvas: View {
+    let bleed: CGFloat
+    let draw: (inout GraphicsContext, CGRect) -> Void
+
+    var body: some View {
+        Canvas { ctx, size in
+            draw(&ctx, CGRect(origin: .zero, size: size).insetBy(dx: bleed, dy: bleed))
+        }
+        .padding(-bleed)
+    }
+}
+
+extension GraphicsContext {
+    /// SwiftUI's `.shadow(color:radius:)` glow under `path`.
+    func glow(_ path: Path, _ color: Color, radius: CGFloat) {
+        var g = self
+        g.addFilter(.shadow(color: color, radius: radius))
+        g.fill(path, with: .color(color))
+    }
+
+    /// `strokeBorder` for a rounded rectangle: the line sits inside `r`.
+    func strokeBorder(_ r: CGRect, cornerRadius: CGFloat, _ color: Color, lineWidth: CGFloat) {
+        let h = lineWidth / 2
+        stroke(Path(roundedRect: r.insetBy(dx: h, dy: h), cornerRadius: max(0, cornerRadius - h)),
+               with: .color(color), lineWidth: lineWidth)
+    }
+}
+
+/// Knob body + tick ring + pointer, in ONE Canvas (see FlatCanvas):
+/// the body's shadow and the rim's blur would otherwise be live layers.
 private struct KnobFace: View {
     let theme: Theme
     let size: CGFloat
     let frac: Double
+    @Environment(\.scale) private var scale
 
     var body: some View {
+        let sz = size * scale
         // ticks reach 0.65 x size from the centre, the shadow ~3 pt past the body
-        let side = (size * 0.65 + 3) * 2
+        let side = (sz * 0.65 + 3 * scale) * 2
         Canvas { ctx, box in
             let c = CGPoint(x: box.width / 2, y: box.height / 2)
             // Oxo Simple's 11-dot ring over the -140..+140 travel, at
             // 1.3 x the body radius, pulled in 1.5 pt.
-            let tick = size * 0.65 - 1.5
+            let tick = sz * 0.65 - 1.5 * scale
+            let dot = 1.6 * scale
             for i in 0..<11 {
                 let a = (-140 + 28 * Double(i)) * .pi / 180
                 let p = CGPoint(x: c.x + tick * sin(a), y: c.y - tick * cos(a))
-                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 0.8, y: p.y - 0.8, width: 1.6, height: 1.6)), with: .color(theme.knobTicks))
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - dot / 2, y: p.y - dot / 2, width: dot, height: dot)),
+                         with: .color(theme.knobTicks))
             }
-            let body = CGRect(x: c.x - size / 2, y: c.y - size / 2, width: size, height: size)
+            let body = CGRect(x: c.x - sz / 2, y: c.y - sz / 2, width: sz, height: sz)
             ctx.drawLayer { k in
-                k.addFilter(.shadow(color: .black.opacity(0.3), radius: 1, x: 1, y: 1))
+                k.addFilter(.shadow(color: .black.opacity(0.3), radius: scale, x: scale, y: scale))
                 k.fill(Path(ellipseIn: body), with: .radialGradient(
                     Gradient(colors: [theme.knobGradient, theme.knobBody]),
-                    center: CGPoint(x: body.minX + 0.35 * size, y: body.minY + 0.3 * size), startRadius: 0, endRadius: size * 0.6))
+                    center: CGPoint(x: body.minX + 0.35 * sz, y: body.minY + 0.3 * sz),
+                    startRadius: 0, endRadius: sz * 0.6))
                 // soft rim: dim, slightly blurred edge instead of a hard ring
                 k.drawLayer { rim in
-                    rim.addFilter(.blur(radius: 0.7))
-                    rim.stroke(Path(ellipseIn: body.insetBy(dx: 0.8, dy: 0.8)), with: .color(theme.knobRim.opacity(0.45)), lineWidth: 1.6)
+                    rim.addFilter(.blur(radius: 0.7 * scale))
+                    rim.stroke(Path(ellipseIn: body.insetBy(dx: 0.8 * scale, dy: 0.8 * scale)),
+                               with: .color(theme.knobRim.opacity(0.45)), lineWidth: 1.6 * scale)
                 }
                 var dial = k
                 dial.translateBy(x: c.x, y: c.y)
                 dial.rotate(by: .degrees(-140 + 280 * frac))
-                let h = size * 0.36
-                dial.fill(Path(roundedRect: CGRect(x: -1, y: -size * 0.24 - h / 2, width: 2, height: h), cornerRadius: 1),
+                let h = sz * 0.36
+                dial.fill(Path(roundedRect: CGRect(x: -1 * scale, y: -sz * 0.24 - h / 2,
+                                                   width: 2 * scale, height: h), cornerRadius: 1 * scale),
                           with: .color(theme.knobDial))
             }
         }
         .frame(width: side, height: side)
-        .frame(width: size, height: size)
+        .frame(width: sz, height: sz)
     }
 }
 
@@ -257,18 +349,20 @@ struct ToggleButton: View {
     let title: String
     var width: CGFloat = 40
 
+    @Environment(\.scale) private var scale
+
     var body: some View {
         let on = model.values[id] != 0
-        HStack(spacing: 3) {
-            FlatCanvas(bleed: 4) { ctx, r in
-                let led = Path(roundedRect: r, cornerRadius: 1)
-                if on { ctx.glow(led, theme.ledOn.opacity(0.9), radius: 2) }
+        HStack(spacing: 3 * scale) {
+            FlatCanvas(bleed: 4 * scale) { ctx, r in
+                let led = Path(roundedRect: r, cornerRadius: 1 * scale)
+                if on { ctx.glow(led, theme.ledOn.opacity(0.9), radius: 2 * scale) }
                 ctx.fill(led, with: .color(on ? theme.ledOn : theme.ledOff))
             }
-            .frame(width: 5, height: 5)
-            Text(title).font(Theme.buttonFont).foregroundColor(Theme.buttonText).lineLimit(1).fixedSize()
+            .frame(width: 5 * scale, height: 5 * scale)
+            Text(title).oxoFont(10, .semibold).foregroundColor(Theme.buttonText).lineLimit(1).fixedSize()
         }
-        .frame(width: width, height: 17)
+        .frame(width: width * scale, height: 17 * scale)
         .background(ButtonFace())
         .contentShape(Rectangle())
         .onTapGesture { model.setOnce(id, on ? 0 : 1) }
@@ -284,10 +378,11 @@ struct CycleButton: View {
     let id: Int
     let title: String
     var width: CGFloat = 40
+    @Environment(\.scale) private var scale
 
     var body: some View {
-        Text(title).font(Theme.buttonFont).foregroundColor(Theme.buttonText).lineLimit(1).fixedSize()
-            .frame(width: width, height: 17)
+        Text(title).oxoFont(10, .semibold).foregroundColor(Theme.buttonText).lineLimit(1).fixedSize()
+            .frame(width: width * scale, height: 17 * scale)
             .background(ButtonFace())
             .contentShape(Rectangle())
             .onTapGesture { model.cycle(id, shiftHeld() ? -1 : 1) }
@@ -299,15 +394,10 @@ struct ButtonFace: View {
     var fill: Color?
     @Environment(\.theme) private var theme
     var body: some View {
-        let base = fill ?? theme.button
-        FlatCanvas(bleed: 3) { ctx, r in
-            let face = Path(roundedRect: r, cornerRadius: 3)
-            var shadow = ctx
-            shadow.addFilter(.shadow(color: .black.opacity(0.3), radius: 0.5, x: 1, y: 1))
-            shadow.fill(face, with: .linearGradient(Gradient(colors: [base.opacity(0.85), base]),
-                                                    startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
-            ctx.strokeBorder(r, cornerRadius: 3, .black.opacity(0.6), lineWidth: 1)
-        }
+        RoundedRectangle(cornerRadius: 3)
+            .fill(LinearGradient(colors: [(fill ?? theme.button).opacity(0.85), fill ?? theme.button], startPoint: .top, endPoint: .bottom))
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.black.opacity(0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 0.5, x: 1, y: 1)
     }
 }
 
@@ -319,15 +409,16 @@ struct PanelButton: View {
     var fill: Color?
     var icon: String?
     let action: () -> Void
+    @Environment(\.scale) private var scale
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                if let icon { Image(systemName: icon).font(.system(size: 9, weight: .bold)) }
-                Text(title).font(.system(size: 11, weight: .semibold))
+            HStack(spacing: 4 * scale) {
+                if let icon { Image(systemName: icon).oxoFont(9, .bold) }
+                Text(title).oxoFont(11, .semibold)
             }
             .foregroundColor(Theme.buttonText)
-            .frame(width: width, height: height)
+            .frame(width: width * scale, height: height * scale)
             .background(ButtonFace(fill: fill))
         }
         .buttonStyle(.plain)
@@ -340,12 +431,13 @@ struct Badge: View {
     @ObservedObject var model: SynthModel
     let text: String
     var id: Int?
+    @Environment(\.scale) private var scale
 
     var body: some View {
         let on = id.map { model.values[$0] != 0 } ?? true
-        let face = Text(text).font(.system(size: 12, weight: .heavy))
+        let face = Text(text).oxoFont(12, .heavy)
             .foregroundColor(on ? (id == nil ? .white : Color(red: 1, green: 0.85, blue: 0.35)) : Color(white: 0.45))
-            .frame(width: 16, height: 18)
+            .frame(width: 16 * scale, height: 18 * scale)
             .background(RoundedRectangle(cornerRadius: 2).fill(on ? Color.black : Color(white: 0.22)))
             .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color(white: 0.5), lineWidth: 1))
         if let id {
@@ -371,72 +463,37 @@ struct LedRadio: View {
     var ledTrailing = false
     var showLabels = true
     var rowHeight: CGFloat = 13
+    @Environment(\.scale) private var scale
     @State private var wheelRemainder: Double = 0
 
     var body: some View {
-        let layout = horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(alignment: ledTrailing ? .trailing : .leading, spacing: 0))
+        let layout = horizontal ? AnyLayout(HStackLayout(spacing: 8 * scale)) : AnyLayout(VStackLayout(alignment: ledTrailing ? .trailing : .leading, spacing: 0))
         layout {
             ForEach(options, id: \.value) { option in
                 let on = model.values[id] == option.value
-                HStack(spacing: 3) {
+                HStack(spacing: 3 * scale) {
                     if !ledTrailing { led(on) }
-                    if showLabels { Text(option.label).font(Theme.labelFont).foregroundColor(theme.ink).fixedSize() }
+                    if showLabels { Text(option.label).oxoFont(9.5, .medium).foregroundColor(theme.ink).fixedSize() }
                     if ledTrailing { led(on) }
                 }
-                .frame(height: rowHeight)
+                .frame(height: rowHeight * scale)
                 .contentShape(Rectangle())
                 .onTapGesture { model.setOnce(id, option.value) }
             }
         }
-        // a vertical list ignores the wheel (it read as moving the LED the
-        // wrong way); a horizontal pair / trio steps like a display
         .displayWheel(model, id, remainder: $wheelRemainder, enabled: horizontal)
         .learnable(model, id)
     }
 
     private func led(_ on: Bool) -> some View {
-        FlatCanvas(bleed: 5) { ctx, r in
+        FlatCanvas(bleed: 5 * scale) { ctx, r in
             let led = Path(ellipseIn: r)
-            if on { ctx.glow(led, theme.radioOn.opacity(0.9), radius: 2.5) }
+            if on { ctx.glow(led, theme.radioOn.opacity(0.9), radius: 2.5 * scale) }
             ctx.fill(led, with: .color(on ? theme.radioOn : theme.radioOff))
-            ctx.stroke(Path(ellipseIn: r.insetBy(dx: 0.25, dy: 0.25)), with: .color(.black.opacity(0.5)), lineWidth: 0.5)
+            ctx.stroke(Path(ellipseIn: r.insetBy(dx: 0.25 * scale, dy: 0.25 * scale)),
+                       with: .color(.black.opacity(0.5)), lineWidth: 0.5 * scale)
         }
-        .frame(width: 7, height: 7)
-    }
-}
-
-// MARK: - Flat drawing
-
-/// A widget drawn in ONE Canvas = one layer, its glow / shadow rasterized
-/// with it. SwiftUI `.shadow` / `.blur` are live CoreAnimation filters on
-/// their own layers (even with a clear colour); Logic's out-of-process
-/// editor host composited all of them again on every panel change (the
-/// voice grid while playing) and its own UI lagged. `bleed`: room drawn
-/// past the frame on each side for the glow; `draw` gets the frame's rect.
-struct FlatCanvas: View {
-    let bleed: CGFloat
-    let draw: (inout GraphicsContext, CGRect) -> Void
-
-    var body: some View {
-        Canvas { ctx, size in
-            draw(&ctx, CGRect(origin: .zero, size: size).insetBy(dx: bleed, dy: bleed))
-        }
-        .padding(-bleed)
-    }
-}
-
-extension GraphicsContext {
-    /// SwiftUI's `.shadow(color:radius:)` glow under `path`.
-    func glow(_ path: Path, _ color: Color, radius: CGFloat) {
-        var g = self
-        g.addFilter(.shadow(color: color, radius: radius))
-        g.fill(path, with: .color(color))
-    }
-
-    /// `strokeBorder` of a rounded rectangle: the line inside `r`.
-    func strokeBorder(_ r: CGRect, cornerRadius: CGFloat, _ color: Color, lineWidth: CGFloat) {
-        let h = lineWidth / 2
-        stroke(Path(roundedRect: r.insetBy(dx: h, dy: h), cornerRadius: max(0, cornerRadius - h)), with: .color(color), lineWidth: lineWidth)
+        .frame(width: 7 * scale, height: 7 * scale)
     }
 }
 
@@ -507,17 +564,19 @@ private struct WaveCell: View {
     let on: Bool
     var width: CGFloat = 22
     var height: CGFloat = 14
+    @Environment(\.scale) private var scale
 
     var body: some View {
-        FlatCanvas(bleed: 4) { ctx, cell in
-            let face = Path(roundedRect: cell, cornerRadius: 2)
-            if on { ctx.glow(face, theme.waveOn.opacity(0.6), radius: 2) }
+        FlatCanvas(bleed: 4 * scale) { ctx, cell in
+            let face = Path(roundedRect: cell, cornerRadius: 2 * scale)
+            if on { ctx.glow(face, theme.waveOn.opacity(0.6), radius: 2 * scale) }
             ctx.fill(face, with: .color(on ? theme.waveOn : theme.button))
-            ctx.strokeBorder(cell, cornerRadius: 2, .black.opacity(0.6), lineWidth: 1)
-            ctx.stroke(icon.path(in: cell.insetBy(dx: 4, dy: 3.5)), with: .color(on ? Color.black : Color(white: 0.85)),
-                       style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+            ctx.strokeBorder(cell, cornerRadius: 2 * scale, .black.opacity(0.6), lineWidth: 1)
+            ctx.stroke(icon.path(in: cell.insetBy(dx: 4 * scale, dy: 3.5 * scale)),
+                       with: .color(on ? Color.black : Color(white: 0.85)),
+                       style: StrokeStyle(lineWidth: 1.3 * scale, lineCap: .round, lineJoin: .round))
         }
-        .frame(width: width, height: height)
+        .frame(width: width * scale, height: height * scale)
     }
 }
 
@@ -527,10 +586,11 @@ struct WaveRadio: View {
     let id: Int
     let shapes: [(value: Int, icon: WaveIcon)]
     var columns = 2
+    @Environment(\.scale) private var scale
     @State private var wheelRemainder: Double = 0
 
     var body: some View {
-        Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+        Grid(horizontalSpacing: 2 * scale, verticalSpacing: 2 * scale) {
             ForEach(Array(stride(from: 0, to: shapes.count, by: columns)), id: \.self) { row in
                 GridRow {
                     ForEach(row..<min(row + columns, shapes.count), id: \.self) { i in
@@ -546,8 +606,7 @@ struct WaveRadio: View {
     }
 }
 
-/// One button showing the current wave (LFO shape): a click opens its pick
-/// list (`TypeMenu`), the wheel steps.
+/// One button showing the current wave; click opens the wave grid.
 struct WaveDisplay: View {
     @ObservedObject var model: SynthModel
     let id: Int
@@ -579,31 +638,34 @@ struct ValueDisplay: View {
     var text: ((Int) -> String)?
     /// A click (no drag) calls this instead of cycling (effect type menu).
     var onTap: (() -> Void)?
+    @Environment(\.scale) private var scale
     @State private var dragStart: Int?
     @State private var moved = false
     @State private var wheelRemainder: Double = 0
 
     var body: some View {
         let v = model.values[id]
+        // A Text VALUE (not a modifier chain) so the Canvas can resolve it.
         let label = Text(text?(v) ?? model.host.format(id, v))
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .font(.system(size: 11 * scale, weight: .bold, design: .monospaced))
             .foregroundColor(theme.displayText)
         FlatCanvas(bleed: 0) { ctx, r in
-            ctx.fill(Path(roundedRect: r, cornerRadius: 2), with: .linearGradient(
-                Gradient(colors: [theme.lcdTop, theme.lcdBottom]), startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
-            ctx.strokeBorder(r, cornerRadius: 2, .black.opacity(0.7), lineWidth: 1)
+            ctx.fill(Path(roundedRect: r, cornerRadius: 2 * scale), with: .linearGradient(
+                Gradient(colors: [theme.lcdTop, theme.lcdBottom]),
+                startPoint: CGPoint(x: 0, y: r.minY), endPoint: CGPoint(x: 0, y: r.maxY)))
+            ctx.strokeBorder(r, cornerRadius: 2 * scale, .black.opacity(0.7), lineWidth: 1)
             // the text's glow; long values shrink to fit (down to 60 %)
             let t = ctx.resolve(label)
             let w = t.measure(in: CGSize(width: CGFloat.infinity, height: .infinity)).width
             let k = min(1, max(0.6, r.width / max(1, w)))
             var g = ctx
-            g.addFilter(.shadow(color: theme.displayText.opacity(0.5), radius: 2))
+            g.addFilter(.shadow(color: theme.displayText.opacity(0.5), radius: 2 * scale))
             g.translateBy(x: r.midX, y: r.midY)
             g.scaleBy(x: k, y: k)
             g.draw(t, at: .zero, anchor: .center)
         }
-            .frame(width: width, height: 17)
-            .contentShape(Rectangle())
+        .frame(width: width * scale, height: 17 * scale)
+        .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     if dragStart == nil {
@@ -614,7 +676,7 @@ struct ValueDisplay: View {
                     }
                     let steps = Int((-g.translation.height / WheelFeel.displayTravelPerStep).rounded())
                     if steps != 0 { moved = true }
-                    if moved { model.set(id, model.stepped(id, from: dragStart ?? v, by: steps)) }
+                    if moved { model.set(id, (dragStart ?? v) + steps) }
                 }
                 .onEnded { _ in
                     if !moved, let onTap { onTap() }
@@ -636,6 +698,7 @@ struct MenuDisplay: View {
     let width: CGFloat
     let label: String
     let groups: [(title: String, items: [(value: Int, label: String)])]
+    @Environment(\.scale) private var scale
 
     var body: some View {
         Menu {
@@ -647,15 +710,16 @@ struct MenuDisplay: View {
                 }
             }
         } label: {
-            Text(label).font(.system(size: 10, weight: .bold, design: .monospaced))
+            // Inline font, not .oxoFont: a ViewModifier (extra @Environment +
+            // wrapper) inside a Menu label perturbs its layout even at scale 1.
+            Text(label).font(.system(size: 10 * scale, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.displayText).lineLimit(1)
-                .frame(width: width - 8, alignment: .leading)
+                .frame(width: width * scale - 8 * scale, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .menuOrder(.fixed)
-        .padding(.horizontal, 4)
-        .frame(width: width, height: 16)
+        .padding(.horizontal, 4 * scale)
+        .frame(width: width * scale, height: 16 * scale)
         .background(RoundedRectangle(cornerRadius: 2).fill(theme.displayFill))
         .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
     }
@@ -677,17 +741,57 @@ struct SectionBox<Content: View>: View {
     let width: CGFloat
     let height: CGFloat
     @ViewBuilder let content: Content
+    @Environment(\.scale) private var scale
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Rectangle().fill(theme.panel)
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundColor(theme.headerText)
-                .padding(.leading, 5)
-                .frame(width: width, height: 16, alignment: .leading)
+            Text(title).oxoFont(12, .semibold).foregroundColor(theme.headerText)
+                .padding(.leading, 5 * scale)
+                .frame(width: width * scale, height: 16 * scale, alignment: .leading)
                 .background(theme.header)
-            content.frame(width: width, height: height)
+            content.frame(width: width * scale, height: height * scale)
         }
-        .frame(width: width, height: height)
+        .frame(width: width * scale, height: height * scale)
         .overlay(Rectangle().strokeBorder(theme.edge, lineWidth: 1))
+    }
+}
+
+/// A patch's colour, which Synth1 stores in the .sy1 itself (`color=`), so
+/// it travels with the file through copy / export / import. The menu of the
+/// browser's patch context menu.
+struct PatchColorEdit {
+    let current: String
+    let set: (String) -> Void
+
+    /// The names real Synth1 / Synth2 libraries use. Anything else (an old
+    /// or foreign value) reads as untinted and stays untouched.
+    static let names = ["default", "blue", "red", "yellow", "green", "magenta"]
+
+    /// nil = "default" and unknown values: the cell stays as it is.
+    static func tint(_ name: String) -> Color? {
+        switch name {
+        case "blue": return Color(red: 0.29, green: 0.55, blue: 1.00)
+        case "red": return Color(red: 1.00, green: 0.33, blue: 0.33)
+        case "yellow": return Color(red: 0.96, green: 0.80, blue: 0.20)
+        case "green": return Color(red: 0.28, green: 0.85, blue: 0.44)
+        case "magenta": return Color(red: 0.96, green: 0.38, blue: 0.96)
+        default: return nil
+        }
+    }
+
+    static func displayName(_ name: String) -> String {
+        name.isEmpty ? "Default" : name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// A submenu with the current one ticked (a Picker: that is what draws
+    /// the tick on both platforms; a Toggle would draw a switch on iPad).
+    var menu: some View {
+        Menu("Colour: " + Self.displayName(current)) {
+            Picker("", selection: Binding(get: { current }, set: { set($0) })) {
+                ForEach(Self.names, id: \.self) { Text(Self.displayName($0)).tag($0) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        }
     }
 }

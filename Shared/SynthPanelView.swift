@@ -74,10 +74,9 @@ struct SynthPanelView: View {
     private func panel(scale: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             ZStack(alignment: .topLeading) {
-                canvas
+                canvas(scale: scale)
                 if model.showBrowser { PatchBrowserView(model: model).place(6, 34, 758, 444) }
             }
-            .environment(\.editorScale, scale)
             // tips over everything at the canvas' scale (SynthTooltip.swift)
             .oxoTooltipHost()
             if model.showThemes {
@@ -86,27 +85,27 @@ struct SynthPanelView: View {
             if model.showLogoMenu {
                 // A click anywhere else closes it.
                 Color.clear.contentShape(Rectangle())
-                    .frame(width: Self.designSize.width, height: Self.designSize.height)
+                    .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
                     .onTapGesture { model.showLogoMenu = false }
-                LogoMenu(model: model, scale: scale).offset(x: 6, y: 30)
+                LogoMenu(model: model, scale: scale).offset(x: 6 * scale, y: 30 * scale)
             }
             if let id = model.typeMenu, let spot = Self.typeMenus[id] {
                 Color.clear.contentShape(Rectangle())
-                    .frame(width: Self.designSize.width, height: Self.designSize.height)
-                    .onTapGesture { model.typeMenu = nil }
+                .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
+                .onTapGesture { model.typeMenu = nil }
                 TypeMenu(model: model, id: id, rows: spot.rows, cell: spot.cell,
-                         icons: id == 42 || id == 47 ? Self.lfoShapes : nil,
-                         order: id == 42 || id == 47 ? Self.lfoShapeOrder : nil)
-                    .offset(x: spot.origin.x, y: spot.origin.y)
+                         icons: Self.typeMenuIcons[id], order: spot.order)
+                    .offset(x: spot.origin.x * scale, y: spot.origin.y * scale)
             }
             if let state = model.update {
                 UpdateDialog(model: model, state: state)
-                    .frame(width: Self.designSize.width, height: Self.designSize.height)
+                    .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
             }
         }
-        .frame(width: Self.designSize.width, height: Self.designSize.height, alignment: .topLeading)
+        .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale,
+               alignment: .topLeading)
         .coordinateSpace(name: Self.canvasSpace)
-        .scaleEffect(scale, anchor: .topLeading)
+        .environment(\.scale, scale)
     }
 
     static let lfoShapes: [WaveIcon] = [.sawDown, .tri, .square, .sampleHold, .smooth, .sine]
@@ -116,18 +115,21 @@ struct SynthPanelView: View {
 
     /// The type pick lists: canvas top-left = under their display's left
     /// edge (section origin + display centre - half width, centre y + 9).
-    private static let typeMenus: [Int: (origin: CGPoint, rows: Int, cell: CGSize)] = [
-        78: (CGPoint(x: 548 + 66 - 23, y: 34 + 40 + 9), 5, CGSize(width: 46, height: 17)),
-        82: (CGPoint(x: 548 + 48 - 14, y: 180 + 32 + 9), 3, CGSize(width: 28, height: 17)),
-        64: (CGPoint(x: 548 + 48 - 14, y: 242 + 32 + 9), 3, CGSize(width: 28, height: 17)),
-        42: (CGPoint(x: 6 + 42 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17)),
-        47: (CGPoint(x: 6 + 270 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17)),
+    /// Effect type (78) is Synth1's 2 x 5 grid; the LFO shapes (42 / 47) a
+    /// 2 x 3 grid of wave icons in `lfoShapeOrder`.
+    private static let typeMenus: [Int: (origin: CGPoint, rows: Int, cell: CGSize, order: [Int]?)] = [
+        78: (CGPoint(x: 548 + 66 - 23, y: 34 + 40 + 9), 5, CGSize(width: 46, height: 17), nil),
+        82: (CGPoint(x: 548 + 48 - 14, y: 180 + 32 + 9), 3, CGSize(width: 28, height: 17), nil),
+        64: (CGPoint(x: 548 + 48 - 14, y: 242 + 32 + 9), 3, CGSize(width: 28, height: 17), nil),
+        42: (CGPoint(x: 6 + 42 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17), lfoShapeOrder),
+        47: (CGPoint(x: 6 + 270 - 13, y: 278 + 30 + 9), 3, CGSize(width: 26, height: 17), lfoShapeOrder),
     ]
+    private static let typeMenuIcons: [Int: [WaveIcon]] = [42: lfoShapes, 47: lfoShapes]
 
-    private var canvas: some View {
+    private func canvas(scale: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             theme.panel
-            titleBand
+            titleBand(scale: scale)
             oscillators.place(6, 34, 312, 240)
             lfo.place(6, 278, 312, 130)
             wheelMidi.place(6, 412, 536, 66)
@@ -141,26 +143,26 @@ struct SynthPanelView: View {
             voice.place(548, 304, 216, 174)
             BottomBar(model: model).place(6, 484, 758, 70)
         }
-        .frame(width: Self.designSize.width, height: Self.designSize.height)
+        .frame(width: Self.designSize.width * scale, height: Self.designSize.height * scale)
     }
 
     // MARK: - placement helpers (section coordinates)
 
     private func knob(_ id: Int, _ label: String, _ x: CGFloat, _ y: CGFloat, size: CGFloat = 24) -> some View {
-        KnobView(model: model, id: id, label: label, size: size).position(x: x, y: y + 6.5)
+        KnobView(model: model, id: id, label: label, size: size).at(x, y + 6.5)
     }
 
     private func toggle(_ id: Int, _ title: String, _ x: CGFloat, _ y: CGFloat, w: CGFloat = 40) -> some View {
-        ToggleButton(model: model, id: id, title: title, width: w).position(x: x, y: y)
+        ToggleButton(model: model, id: id, title: title, width: w).at(x, y)
     }
 
     private func cycler(_ id: Int, _ title: String, _ x: CGFloat, _ y: CGFloat, w: CGFloat = 40) -> some View {
-        CycleButton(model: model, id: id, title: title, width: w).position(x: x, y: y)
+        CycleButton(model: model, id: id, title: title, width: w).at(x, y)
     }
 
     private func display(_ id: Int, _ x: CGFloat, _ y: CGFloat, w: CGFloat = 30, cycles: Bool = false,
                          text: ((Int) -> String)? = nil, onTap: (() -> Void)? = nil) -> some View {
-        ValueDisplay(model: model, id: id, width: w, tapCycles: cycles, text: text, onTap: onTap).position(x: x, y: y)
+        ValueDisplay(model: model, id: id, width: w, tapCycles: cycles, text: text, onTap: onTap).at(x, y)
     }
 
     private static let twoDigits: (Int) -> String = { String(format: "%02d", $0) }
@@ -168,13 +170,13 @@ struct SynthPanelView: View {
     /// Dim separator line (section-header colour, half transparent).
     private func divider(_ x1: CGFloat, _ y1: CGFloat, _ x2: CGFloat, _ y2: CGFloat) -> some View {
         Rectangle().fill(theme.header.opacity(0.55))
-            .frame(width: max(1, x2 - x1), height: max(1, y2 - y1))
-            .position(x: (x1 + x2) / 2, y: (y1 + y2) / 2)
+            .scaleForPanel(max(1, x2 - x1), max(1, y2 - y1))
+            .at((x1 + x2) / 2, (y1 + y2) / 2)
             .allowsHitTesting(false)
     }
 
     private func label(_ text: String, _ x: CGFloat, _ y: CGFloat) -> some View {
-        Text(text).font(Theme.labelFont).foregroundColor(theme.ink).fixedSize().position(x: x, y: y)
+        Text(text).oxoFont(9.5, .medium).foregroundColor(theme.ink).fixedSize().at(x, y)
     }
 
     private func radio(_ id: Int, _ labels: [String], from: Int = 0) -> [(value: Int, label: String)] {
@@ -183,9 +185,9 @@ struct SynthPanelView: View {
 
     // MARK: - title band
 
-    private var titleBand: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("Synth2").font(.system(size: 20, weight: .bold)).foregroundColor(theme.ink)
+    private func titleBand(scale: CGFloat) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
+            Text("Synth2").oxoFont(20, .bold).foregroundColor(theme.ink)
                 .contentShape(Rectangle())
                 // Logo menu (UI size where the host can resize + theme).
                 // Press + release, not onTapGesture: a tap is cancelled by
@@ -194,22 +196,22 @@ struct SynthPanelView: View {
                     guard hypot(g.translation.width, g.translation.height) < 8 else { return }
                     model.showLogoMenu.toggle()
                 })
-            Text("Virtual Analog").font(.system(size: 12, weight: .bold).italic()).foregroundColor(theme.dimInk)
+            Text("Virtual Analog").oxoFont(12, .bold).italic().foregroundColor(theme.dimInk)
             Spacer()
             if model.uiWidthModeStorage != nil {
-                UIModeToggle(model: model).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                UIModeToggle(model: model).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 * scale }
             }
             Text("V\(Self.version)  a Synth1 recreation")
-                .font(.system(size: 12, weight: .bold)).foregroundColor(.white)
-                .padding(.horizontal, 10).frame(height: 20)
+                .oxoFont(12, .bold).foregroundColor(.white)
+                .padding(.horizontal, 10 * scale).frame(height: 20 * scale)
                 .background(Rectangle().fill(Theme.red))
-                .overlay(Rectangle().strokeBorder(Color.black, lineWidth: 1))
+                .overlay(Rectangle().strokeBorder(Color.black, lineWidth: 1 * scale))
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onEnded { g in
                     if hypot(g.translation.width, g.translation.height) < 8 { openURL(Self.projectURL) }
                 })
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 8 * scale)
         .place(0, 4, 770, 26)
     }
 
@@ -226,17 +228,17 @@ struct SynthPanelView: View {
                 divider(8, 78, 304, 78)
                 divider(212, 84, 212, 234)
                 divider(8, 163, 204, 163)
-                Badge(model: model, text: "1").position(x: 14, y: 36)
-                WaveRadio(model: model, id: 0, shapes: [(0, .sine), (1, .saw), (2, .pulse), (3, .tri)]).position(x: 50, y: 40)
+                Badge(model: model, text: "1").at(14, 36)
+                WaveRadio(model: model, id: 0, shapes: [(0, .sine), (1, .saw), (2, .pulse), (3, .tri)]).at(50, 40)
                 knob(76, "det", 100, 36)
                 knob(45, "FM", 136, 36)
                 label("sub", 186, 24)
-                WaveRadio(model: model, id: 96, shapes: [(0, .sine), (1, .tri), (2, .saw), (3, .square)]).position(x: 208, y: 44)
+                WaveRadio(model: model, id: 96, shapes: [(0, .sine), (1, .tri), (2, .saw), (3, .square)]).at(208, 44)
                 knob(95, "sub", 260, 36)
-                LedRadio(model: model, id: 97, options: radio(97, ["0oct", "-1oct"]), horizontal: true).position(x: 234, y: 70)
+                LedRadio(model: model, id: 97, options: radio(97, ["0oct", "-1oct"]), horizontal: true).at(234, 70)
 
-                Badge(model: model, text: "2").position(x: 14, y: 94)
-                WaveRadio(model: model, id: 1, shapes: [(1, .saw), (2, .pulse), (3, .tri), (4, .noise)]).position(x: 50, y: 98)
+                Badge(model: model, text: "2").at(14, 94)
+                WaveRadio(model: model, id: 1, shapes: [(1, .saw), (2, .pulse), (3, .tri), (4, .noise)]).at(50, 98)
                 toggle(7, "ring", 104, 94)
                 toggle(6, "sync", 150, 94)
                 display(9, 260, 90, w: 32, text: Self.twoDigits)
@@ -254,7 +256,7 @@ struct SynthPanelView: View {
                 knob(11, "amt", 176, 184)
 
                 cycler(71, "dest.", 36, 220, w: 52)
-                LedRadio(model: model, id: 71, options: radio(71, ["osc2", "FM", "p/w"]), horizontal: true).position(x: 126, y: 220)
+                LedRadio(model: model, id: 71, options: radio(71, ["osc2", "FM", "p/w"]), horizontal: true).at(126, 220)
                 knob(91, "phase", 238, 206)
                 knob(72, "tune", 282, 206)
             }
@@ -265,8 +267,8 @@ struct SynthPanelView: View {
         let dests = radio(41, ["osc2", "osc1,2", "filter", "amp", "p/w", "FM", "pan"], from: 1)
         return SectionBox(title: "LFO", width: 312, height: 130) {
             ZStack {
-                Badge(model: model, text: "1", id: 57).position(x: 14, y: 30)
-                WaveDisplay(model: model, id: 42, icons: Self.lfoShapes).position(x: 42, y: 30)
+                Badge(model: model, text: "1", id: 57).at(14, 30)
+                WaveDisplay(model: model, id: 42, icons: Self.lfoShapes).at(42, 30)
                 cycler(41, "dst", 78, 30, w: 32)
                 knob(43, "spd", 30, 62)
                 knob(44, "amt", 76, 62)
@@ -274,17 +276,19 @@ struct SynthPanelView: View {
                 toggle(67, "tempo", 30, 114, w: 46)
                 toggle(68, "key", 78, 114, w: 36)
 
-                LedRadio(model: model, id: 41, options: dests, showLabels: false).position(x: 124, y: 72)
+                LedRadio(model: model, id: 41, options: dests, showLabels: false).at(124, 72)
                 VStack(spacing: 0) {
-                    ForEach(dests, id: \.value) { Text($0.label).font(Theme.labelFont).foregroundColor(theme.ink).frame(height: 13) }
+                    ForEach(dests, id: \.value) {
+                        Text($0.label).oxoFont(9.5, .medium).foregroundColor(theme.ink).oxoHeight(13)
+                    }
                 }
-                .position(x: 156, y: 72)
+                .at(156, 72)
                 LedRadio(model: model, id: 46, options: radio(46, dests.map(\.label), from: 1), ledTrailing: true, showLabels: false)
-                    .position(x: 188, y: 72)
+                    .at(188, 72)
 
                 cycler(46, "dst", 234, 30, w: 32)
-                WaveDisplay(model: model, id: 47, icons: Self.lfoShapes).position(x: 270, y: 30)
-                Badge(model: model, text: "2", id: 58).position(x: 298, y: 30)
+                WaveDisplay(model: model, id: 47, icons: Self.lfoShapes).at(270, 30)
+                Badge(model: model, text: "2", id: 58).at(298, 30)
                 knob(48, "spd", 236, 62)
                 knob(49, "amt", 282, 62)
                 label("-sync-", 260, 99)
@@ -300,13 +304,13 @@ struct SynthPanelView: View {
                 label("p.b range", 32, 28)
                 display(40, 32, 46, w: 30, text: Self.twoDigits)
                 label("src1", 82, 31)
-                ctrlSrc(86).position(x: 158, y: 31)
+                ctrlSrc(86).at(158, 31)
                 label("->", 228, 31)
-                ctrlAssign(87).position(x: 298, y: 31)
+                ctrlAssign(87).at(298, 31)
                 label("src2", 82, 51)
-                ctrlSrc(88).position(x: 158, y: 51)
+                ctrlSrc(88).at(158, 51)
                 label("->", 228, 51)
-                ctrlAssign(89).position(x: 298, y: 51)
+                ctrlAssign(89).at(298, 51)
                 knob(50, "sens1", 400, 34, size: 22)
                 knob(51, "sens2", 446, 34, size: 22)
             }
@@ -336,7 +340,7 @@ struct SynthPanelView: View {
                 knob(21, "amt", 150, 44)
                 cycler(14, "type", 196, 30, w: 36)
                 LedRadio(model: model, id: 14, options: radio(14, ["LP12", "LP24", "HP12", "BP12", "LPDL"]), rowHeight: 14)
-                    .position(x: 196, y: 82)
+                    .at(196, 82)
                 knob(19, "frq", 20, 106)
                 knob(20, "res", 52, 106)
                 knob(23, "sat", 84, 106)
@@ -353,9 +357,9 @@ struct SynthPanelView: View {
                 cycler(31, "type", 66, 30, w: 40)
                 cycler(32, "range", 128, 30, w: 44)
                 LedRadio(model: model, id: 31, options: radio(31, ["updown", "up", "down", "random"], from: 1), rowHeight: 14)
-                    .position(x: 40, y: 78)
+                    .at(40, 78)
                 LedRadio(model: model, id: 32, options: radio(32, ["1oct", "2oct", "3oct", "4oct"]), rowHeight: 14)
-                    .position(x: 126, y: 78)
+                    .at(126, 78)
                 knob(33, "beat", 190, 36)
                 knob(34, "gate", 190, 88)
             }
@@ -417,7 +421,7 @@ struct SynthPanelView: View {
     private var voice: some View {
         SectionBox(title: "Voice", width: 216, height: 174) {
             ZStack {
-                LedRadio(model: model, id: 38, options: radio(38, ["poly", "mono", "legato"]), rowHeight: 14).position(x: 34, y: 46)
+                LedRadio(model: model, id: 38, options: radio(38, ["poly", "mono", "legato"]), rowHeight: 14).at(34, 46)
                 display(94, 130, 38, w: 30)
                 label("poly", 130, 55)
                 toggle(73, "unison", 36, 100, w: 56)
@@ -509,6 +513,7 @@ private struct PanelScrollStrip: View {
 private struct UIModeToggle: View {
     @ObservedObject var model: SynthModel
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
 
     var body: some View {
         let wide = model.uiWidthMode
@@ -519,8 +524,8 @@ private struct UIModeToggle: View {
             DoubleArrow(horizontal: wide)
                 .stroke(theme.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
         }
-        .frame(width: 22, height: 22)
-        .padding(.horizontal, 6)
+        .frame(width: 22 * scale, height: 22 * scale)
+        .padding(.horizontal, 6 * scale)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onEnded { g in
             if hypot(g.translation.width, g.translation.height) < 8 { model.toggleUIWidthMode() }
@@ -551,9 +556,35 @@ private struct DoubleArrow: Shape {
 }
 
 extension View {
-    /// Frame + place by top-left corner in the parent's coordinates.
+    /// Frame + place by top-left corner in the parent's design coordinates,
+    /// at the panel's live scale (see `\.scale`).
     func place(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> some View {
-        frame(width: w, height: h).position(x: x + w / 2, y: y + h / 2)
+        modifier(Placed(x: x, y: y, w: w, h: h))
+    }
+
+    /// Centre in the parent's design coordinates, at the panel's live scale.
+    fileprivate func at(_ x: CGFloat, _ y: CGFloat) -> some View {
+        modifier(AtPoint(x: x, y: y))
+    }
+}
+
+private struct Placed: ViewModifier {
+    @Environment(\.scale) private var scale
+    let x, y, w, h: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: w * scale, height: h * scale)
+            .position(x: (x + w / 2) * scale, y: (y + h / 2) * scale)
+    }
+}
+
+private struct AtPoint: ViewModifier {
+    @Environment(\.scale) private var scale
+    let x, y: CGFloat
+
+    func body(content: Content) -> some View {
+        content.position(x: x * scale, y: y * scale)
     }
 }
 
@@ -571,6 +602,7 @@ struct TypeMenu: View {
     var icons: [WaveIcon]?
     var order: [Int]?
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
     @State private var hovered: Int?
 
     var body: some View {
@@ -591,7 +623,7 @@ struct TypeMenu: View {
         }
         .fixedSize()
         .background(theme.displayFill)
-        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
+        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.7), lineWidth: 1 * scale))
         .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
         #if os(macOS)
         .background(WheelShield())
@@ -604,20 +636,20 @@ struct TypeMenu: View {
             if let icons, v - min < icons.count {
                 let icon = icons[v - min]
                 Canvas { ctx, size in
-                    let r = CGRect(origin: .zero, size: size).insetBy(dx: 5, dy: 4)
+                    let r = CGRect(origin: .zero, size: size).insetBy(dx: 5 * scale, dy: 4 * scale)
                     ctx.stroke(icon.path(in: r), with: .color(ink),
-                               style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+                               style: StrokeStyle(lineWidth: 1.3 * scale, lineCap: .round, lineJoin: .round))
                 }
             } else {
                 Text(model.host.format(id, v))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .oxoFont(11, .bold, design: .monospaced)
                     .foregroundColor(ink)
                     .lineLimit(1).minimumScaleFactor(0.6)
             }
         }
-        .frame(width: cell.width, height: cell.height)
+        .frame(width: cell.width * scale, height: cell.height * scale)
         .background(on ? theme.displayText : hovered == v ? theme.displayText.opacity(0.2) : Color.clear)
-        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
+        .overlay(Rectangle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5 * scale))
         .contentShape(Rectangle())
         .onHover { inside in
             if inside { hovered = v } else if hovered == v { hovered = nil }

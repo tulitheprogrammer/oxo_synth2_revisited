@@ -295,7 +295,6 @@ enum Dlg {
     static let text = Color(white: 0.9)
     static let dim = Color(white: 0.6)
     static let accent = Color(red: 0.35, green: 0.65, blue: 0.91)
-    static let font = Font.system(size: 10)
 }
 
 /// The Themes dialog, drawn INSIDE the plugin panel (same on mac VST3 /
@@ -305,6 +304,7 @@ enum Dlg {
 struct ThemeDialog: View {
     static let width: CGFloat = 330
 
+    @Environment(\.scale) private var scale
     @ObservedObject var model: SynthModel
     @ObservedObject var store = ThemeStore.shared
     /// Top-left corner in canvas coordinates.
@@ -318,10 +318,10 @@ struct ThemeDialog: View {
     var body: some View {
         VStack(spacing: 0) {
             titleBar
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8 * scale) {
                 // Theme name / Load / Save first: on iPad the keyboard covers
                 // the bottom of the panel, a field up here stays visible.
-                HStack(spacing: 6) {
+                HStack(spacing: 6 * scale) {
                     menu("Load") {
                         ForEach(ThemePalette.factory, id: \.name) { item in
                             Button(item.name == "Synth2" ? "Synth2 (default)" : item.name) {
@@ -344,9 +344,9 @@ struct ThemeDialog: View {
                     .opacity(store.userThemes.isEmpty ? 0.4 : 1)
                     Spacer()
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: 6 * scale) {
                     TextField("theme name", text: $name)
-                        .textFieldStyle(.plain).font(Dlg.font).foregroundColor(Dlg.text)
+                        .textFieldStyle(.plain).oxoFont(10).foregroundColor(Dlg.text)
                         .padding(.horizontal, 6).frame(height: 20)
                         .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
                         .onSubmit { store.save(model.palette, as: name) }
@@ -375,11 +375,11 @@ struct ThemeDialog: View {
 
     private var titleBar: some View {
         ZStack {
-            Text("Synth2 Themes").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
+            Text("Synth2 Themes").oxoFont(11, .semibold).foregroundColor(Dlg.text)
             HStack {
-                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 11, height: 11)
-                    .overlay(Image(systemName: "xmark").font(.system(size: 6, weight: .bold)).foregroundColor(.black.opacity(0.6)))
-                    .padding(6)
+                Circle().fill(Color(red: 1, green: 0.37, blue: 0.34)).frame(width: 11 * scale, height: 11 * scale)
+                    .overlay(Image(systemName: "xmark").oxoFont(6, .bold).foregroundColor(.black.opacity(0.6)))
+                    .padding(6 * scale)
                     .contentShape(Rectangle())
                     .onTapGesture { model.showThemes = false }
                 Spacer()
@@ -400,7 +400,7 @@ struct ThemeDialog: View {
     }
 
     private var swatches: some View {
-        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+        Grid(alignment: .leading, horizontalSpacing: 10 * scale, verticalSpacing: 4 * scale) {
             ForEach(Array(stride(from: 0, to: ThemeColor.allCases.count, by: 2)), id: \.self) { i in
                 GridRow {
                     swatch(ThemeColor.allCases[i])
@@ -411,22 +411,22 @@ struct ThemeDialog: View {
     }
 
     private func swatch(_ c: ThemeColor) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 6 * scale) {
             RoundedRectangle(cornerRadius: 3).fill(model.palette[c].color)
                 .overlay(RoundedRectangle(cornerRadius: 3)
                     .strokeBorder(selected == c ? Dlg.accent : Color.white.opacity(0.25), lineWidth: selected == c ? 2 : 1))
-                .frame(width: 34, height: 17)
-            Text(c.title).font(Dlg.font).foregroundColor(selected == c ? Dlg.text : Dlg.dim)
+                .frame(width: 34 * scale, height: 17 * scale)
+            Text(c.title).oxoFont(10).foregroundColor(selected == c ? Dlg.text : Dlg.dim)
         }
-        .frame(width: 150, alignment: .leading)
+        .frame(width: 150 * scale, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { selected = c }
     }
 
     private func chip(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(Dlg.font).foregroundColor(Dlg.text)
-                .frame(width: 56, height: 20)
+            Text(title).oxoFont(10).foregroundColor(Dlg.text)
+                .frame(width: 56 * scale, height: 20 * scale)
                 .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.bar))
         }
         .buttonStyle(.plain)
@@ -434,12 +434,13 @@ struct ThemeDialog: View {
 
     private func menu<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         Menu(content: content) {
-            HStack(spacing: 4) {
-                Text(title).font(Dlg.font)
-                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+            // Inline fonts, not .oxoFont: see MenuDisplay.
+            HStack(spacing: 4 * scale) {
+                Text(title).font(.system(size: 10 * scale))
+                Image(systemName: "chevron.down").font(.system(size: 7 * scale, weight: .bold))
             }
             .foregroundColor(Dlg.text)
-            .frame(width: 70, height: 20)
+            .frame(width: 70 * scale, height: 20 * scale)
             .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.bar))
         }
         .menuStyle(.button)
@@ -515,7 +516,7 @@ struct LogoMenu: View {
 
     private func column<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.system(size: 9, weight: .semibold)).foregroundColor(Dlg.dim)
+            Text(title).oxoFont(9, .semibold).foregroundColor(Dlg.dim)
                 .padding(.horizontal, 8).frame(height: 16)
             content()
         }
@@ -524,7 +525,7 @@ struct LogoMenu: View {
     }
 
     private func row(_ id: String, _ title: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Text(title).font(.system(size: 11, weight: active ? .semibold : .regular))
+        Text(title).oxoFont(11, active ? .semibold : .regular)
             .foregroundColor(active ? .white : Dlg.text)
             .lineLimit(1).truncationMode(.tail)
             .padding(.horizontal, 8)
@@ -545,6 +546,8 @@ struct LogoMenu: View {
 /// Saturation / brightness square + hue bar + hex field, editing one colour
 /// live. Hue and saturation are kept locally so they survive black / grey.
 private struct ColorEditor: View {
+    @Environment(\.scale) private var scale
+
     @Binding var rgb: RGB
     @State private var h: Double
     @State private var s: Double
@@ -561,19 +564,19 @@ private struct ColorEditor: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(spacing: 6) {
-                svSquare.frame(width: 210, height: 84)
-                hueBar.frame(width: 210, height: 12)
+        HStack(alignment: .top, spacing: 10 * scale) {
+            VStack(spacing: 6 * scale) {
+                svSquare.frame(width: 210 * scale, height: 84 * scale)
+                hueBar.frame(width: 210 * scale, height: 12 * scale)
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 6 * scale) {
                 RoundedRectangle(cornerRadius: 3).fill(rgb.color)
                     .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
-                    .frame(width: 90, height: 56)
+                    .frame(width: 90 * scale, height: 56 * scale)
                 TextField("#RRGGBB", text: $hex)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 10, design: .monospaced)).foregroundColor(Dlg.text)
-                    .padding(.horizontal, 6).frame(width: 90, height: 20)
+                    .oxoFont(10, design: .monospaced).foregroundColor(Dlg.text)
+                    .padding(.horizontal, 6 * scale).frame(width: 90 * scale, height: 20 * scale)
                     .background(RoundedRectangle(cornerRadius: 3).fill(Dlg.field))
                     .onSubmit {
                         guard let c = RGB(hex: hex) else { return hex = rgb.hex }

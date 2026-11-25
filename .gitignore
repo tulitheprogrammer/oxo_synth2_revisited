@@ -18,4 +18,7 @@ dist/
 app_store_screenshots/
 OxoSynth2VST3/build-preview/
 Windows_Build/build-*/
+.lat-build
+lat.md/.cache/
+lat.md/node_modules/
 Linux_Build/build.*.log

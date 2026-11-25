@@ -283,6 +283,7 @@ private struct OxoTooltipHost: ViewModifier {
 private struct OxoTooltipLayer: View {
     let center: OxoTooltipCenter
     @Environment(\.theme) private var theme
+    @Environment(\.scale) private var scale
     @State private var bubbleSize: CGSize = .zero
 
     private static let margin: CGFloat = 4
@@ -291,12 +292,12 @@ private struct OxoTooltipLayer: View {
         GeometryReader { proxy in
             if let tip = center.tip {
                 Text(tip.text)
-                    .font(.system(size: 10))
+                    .oxoFont(10)
                     .foregroundStyle(Theme.lcdText)
                     .lineLimit(1)
                     .fixedSize()
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6 * scale)
+                    .padding(.vertical, 3 * scale)
                     .background(theme.lcdBottom)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.8), lineWidth: 1))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -308,10 +309,10 @@ private struct OxoTooltipLayer: View {
     }
 
     private func origin(for pointer: CGPoint, in bounds: CGSize) -> CGSize {
-        let m = Self.margin
-        let x = min(max(m, pointer.x + 10), bounds.width - bubbleSize.width - m)
-        var y = pointer.y + 18
-        if y + bubbleSize.height > bounds.height - m { y = pointer.y - bubbleSize.height - 6 }
+        let m = Self.margin * scale
+        let x = min(max(m, pointer.x + 10 * scale), bounds.width - bubbleSize.width - m)
+        var y = pointer.y + 18 * scale
+        if y + bubbleSize.height > bounds.height - m { y = pointer.y - bubbleSize.height - 6 * scale }
         return CGSize(width: max(m, x), height: max(m, y))
     }
 }

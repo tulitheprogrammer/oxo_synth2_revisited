@@ -13,6 +13,9 @@ Synth2 aims to keep those sounds playable on modern computers. Open source, so t
 
 - **Same parameters, same UI:** Some UX improvements (MIDI Learn, themes, etc.), but nothing was changed in the synth engine.
 - **Import patches:** All Synth1 patches (`.sy1` files and zip banks) load just like in Synth1.
+- **Find patches fast:** browser filters by type, star or free-text tags you add, and
+  keeps your marks in one portable `categories.json` you can carry to a new setup (the
+  patches themselves stay plain `.sy1` files).
 - **Carefully modeled with Claude:** Opus 5.5 generated ~ 3 GB of measurement data before modeling every parameter one by one.
 
 Note: the original Synth1 was studied only through its audio output. The binary was never disassembled or decompiled (see the clean-room rule in [AGENTS.md](AGENTS.md#rules)).
@@ -68,6 +71,10 @@ Needs a Mac with a recent Xcode (developed with Xcode 27) and CMake 3.25+.
 ```sh
 ./build_vst3.sh   # builds and installs the VST3 + AUv2 into ~/Library/Audio/Plug-Ins
 ```
+
+Options: `--no-install` builds only; `--global` installs the VST3 into
+`/Library/Audio/Plug-Ins/VST3` and the AUv2 into `~/Library/Audio/Plug-Ins/Components`
+(the AU is kept out of the global folder on purpose — see below).
 
 ### iPad (AUv3)
 
