@@ -22,6 +22,105 @@ Note: the original Synth1 was studied only through its audio output. The binary 
 
 Formats: macOS VST3 + AUv2, iPad AUv3, Windows VST3 (x64), Linux VST3 (x86-64, ARM64).
 
+This is a fork of [`chab/oxo_synth2`](https://github.com/chab/oxo_synth2) and
+tracks it (currently 1.1.8, build 17). It adds a patch-library browser and a
+few build fixes; see [What this fork adds](#what-this-fork-adds).
+
+## What this fork adds
+
+Everything below is **on top of upstream** (`chab/oxo_synth2`): the synth
+engine, the parameters, the panel and the `.sy1` format are unchanged, so
+patches and projects move between the two freely.
+
+### Patch browser: categories, stars, tags
+
+A sidecar `categories.json` at the library root adds three ways to find a
+patch, without touching the `.sy1` files themselves:
+
+- **22 categories** (Bass, Lead, Pluck, Pad, Strings, Brass, Keys, Organ,
+  Piano, Bell, Arp, Chord, Sequence, FX, Perc, Vocal, Guitar, Wind, Mallet,
+  Texture, Init, Unclassified). Each patch is classified from its **name** by
+  an ordered rule table, so a fresh library arrives sorted; any patch can be
+  overridden by hand.
+- **Stars** — a favourite flag per patch.
+- **Free-form tags** — as many per patch as you like, so "dark pad" is
+  expressible where a single category is not.
+
+Records are keyed by the **SHA-256 of the patch's bytes**, not its path, so a
+star follows a patch through a bank rename, a copy into another bank, an
+export and an import. Hashing is opt-in: a library nobody has tagged pays
+nothing for it. `⋯ > Export / Import categories and tags…` carries the whole
+store to a new machine; imports merge, and your existing marks win.
+
+### Patch browser: filtering and finding
+
+- **Filter bar**: free text over patch, bank, category and tag names, one of
+  the 22 type chips, and a star-only chip. Non-matching patches are **hidden**
+  (the grid closes up) rather than dimmed, each bank row shows "matching /
+  total", and the patch you are currently playing never disappears.
+- **All patches** view: every bank in one flat list, narrowed by the same
+  filter — the way to hunt a sound when you do not remember which bank it is
+  in.
+- **Random patch**: a reservoir sample over whatever the filter lets through,
+  so it hunts undiscovered sounds *inside* the style you are looking for.
+  Reachable from the browser header and the LCD menu, and it works mid-scan.
+- **Find duplicates…**: groups patches whose files are byte-for-byte
+  identical, listing every copy's bank, slot, name and colour. Nothing is
+  deleted automatically.
+
+### Patch browser: colours and streaming
+
+- **Patch colours**: a patch's colour is Synth1's own `color=` line in the
+  `.sy1`, so it needs no sidecar record and travels with the file. Six names
+  (`default`, `blue`, `red`, `yellow`, `green`, `magenta`); cells are tinted,
+  and a colour this build does not know stays untouched rather than being
+  reset.
+- **Streamed scans**: a large library no longer shows nothing until the whole
+  rescan ends. Banks arrive while the scan runs, already usable, with a
+  "N/M banks · P patches" bar in the header.
+- **A silent library is now an error**: if the engine's library JSON cannot be
+  decoded, the browser says where and why instead of looking like an empty
+  library. (An older build wrote favourites as numbers where Swift expected
+  booleans, so the whole document failed to decode — both sides now emit and
+  accept booleans.)
+
+These are the **mac and iPad** SwiftUI browser's. The Windows and Linux
+editors share the engine, so a library tagged on the mac opens there with its
+marks intact and a written patch keeps its colour, but their panels do not
+draw the filter bar or the star / tag / colour menus yet.
+
+### Editor scaling
+
+The panel used to be drawn at its 770×560 design size and upscaled with
+`.scaleEffect`, so text went soft as soon as the window grew past 100 %. Now
+every length, frame and font multiplies a `\.scale` value and text is laid out
+at its final size, so it stays crisp at every UI size (75–200 % on the mac).
+
+### Build and install
+
+- **`--global`**: `./build_vst3.sh --global` installs the VST3 into
+  `/Library/Audio/Plug-Ins/VST3` while keeping the AUv2 in
+  `~/Library/Audio/Plug-Ins/Components`. The AU is deliberately kept out of
+  the global folder: a `Components` folder that is a symlink onto an exFAT
+  volume is not scanned by `AudioComponentRegistrar`, so an AU installed there
+  never loads.
+- **exFAT code seals**: exFAT cannot store xattrs, so macOS writes `._NAME`
+  AppleDouble sidecars into the bundle as it is created, and those unsigned
+  files break the seal. `seal_bundle` purges them, signs, and purges again
+  (signing re-creates `._CodeResources`). `rsync --exclude` cannot prevent
+  this — the files appear on write.
+- **`moduleinfo.json` guard**: the file is regenerated when it is missing or
+  0 bytes. An incremental Xcode build can skip the SDK's post-build step,
+  leaving an empty file that hides the plugin from hosts that read it.
+
+### Carried here, but now upstream too
+
+These began as fork fixes, were filed as issues and merged into upstream
+1.1.8 build 17, so they are **not** gaps any more: build and validator logs
+read as text, the AUv2 `AudioComponents` version derived from
+`MARKETING_VERSION`, the AUv2 installed with a real DSP bundle instead of a
+build-tree symlink, and import results reported instead of failing silently.
+
 ## Download
 
 Official builds are published on the Oxo Music website:
