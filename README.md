@@ -52,7 +52,15 @@ export and an import. Hashing is opt-in: a library nobody has tagged pays
 nothing for it. `⋯ > Export / Import categories and tags…` carries the whole
 store to a new machine; imports merge, and your existing marks win.
 
+<p align="center">
+  <img src="docs/images/fork_tags_dialog.png" width="420" alt="The category and tags dialog: a type picker over the 22 categories, a Starred toggle, and tags with suggestions">
+</p>
+
 ### Patch browser: filtering and finding
+
+<p align="center">
+  <img src="docs/images/fork_filter_bar.png" width="760" alt="The filter bar: free-text search, one type chip per category, a star-only chip, and bank rows counting matches against their total">
+</p>
 
 - **Filter bar**: free text over patch, bank, category and tag names, one of
   the 22 type chips, and a star-only chip. Non-matching patches are **hidden**
@@ -61,12 +69,21 @@ store to a new machine; imports merge, and your existing marks win.
 - **All patches** view: every bank in one flat list, narrowed by the same
   filter — the way to hunt a sound when you do not remember which bank it is
   in.
+
+<p align="center">
+  <img src="docs/images/fork_all_patches.png" width="760" alt="The All patches view: every bank in one flat list, each row prefixed with its bank name, starred and coloured patches marked">
+</p>
+
 - **Random patch**: a reservoir sample over whatever the filter lets through,
   so it hunts undiscovered sounds *inside* the style you are looking for.
   Reachable from the browser header and the LCD menu, and it works mid-scan.
 - **Find duplicates…**: groups patches whose files are byte-for-byte
   identical, listing every copy's bank, slot, name and colour. Nothing is
   deleted automatically.
+
+<p align="center">
+  <img src="docs/images/fork_duplicates.png" width="620" alt="The duplicate patches dialog: sets of identical files, each copy listed with its bank, slot and name">
+</p>
 
 ### Patch browser: colours and streaming
 
@@ -75,9 +92,19 @@ store to a new machine; imports merge, and your existing marks win.
   (`default`, `blue`, `red`, `yellow`, `green`, `magenta`); cells are tinted,
   and a colour this build does not know stays untouched rather than being
   reset.
+
+<p align="center">
+  <img src="docs/images/fork_colours.png" width="760" alt="Coloured slots in the browser grid: blue, red, yellow and green patches beside default ones">
+</p>
+
 - **Streamed scans**: a large library no longer shows nothing until the whole
   rescan ends. Banks arrive while the scan runs, already usable, with a
   "N/M banks · P patches" bar in the header.
+
+<p align="center">
+  <img src="docs/images/fork_scan_progress.png" width="760" alt="The scan progress bar in the browser header: 2/3 banks, 7 patches, with the banks already streamed in and usable">
+</p>
+
 - **A silent library is now an error**: if the engine's library JSON cannot be
   decoded, the browser says where and why instead of looking like an empty
   library. (An older build wrote favourites as numbers where Swift expected
@@ -95,6 +122,11 @@ The panel used to be drawn at its 770×560 design size and upscaled with
 `.scaleEffect`, so text went soft as soon as the window grew past 100 %. Now
 every length, frame and font multiplies a `\.scale` value and text is laid out
 at its final size, so it stays crisp at every UI size (75–200 % on the mac).
+
+<p align="center">
+  <img src="docs/images/fork_ui_sizes.png" width="300" alt="The logo menu's UI size column: 75%, 100%, 115%, 125%, 140%, 150% and 200%, beside the theme column">
+</p>
+
 
 ### Build and install
 

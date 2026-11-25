@@ -228,7 +228,10 @@ the iPad plist `OxoSynth2AudioUnit/Info.plist` still carries it by hand.
   folder>`, library = the desktop's Documents (`XDG_DOCUMENTS_DIR` in
   user-dirs.dirs, else ~/Documents). Compile check of our Linux files:
   `-Wall -Wextra` clean, GCC 12+.
-- `docs/images/` — README pictures (`synth2_preview.jpg`).
+- `docs/images/` — README pictures (`synth2_preview.jpg`, and the fork
+  section's `fork_*.png`: rendered with `tools/ui_snapshot`'s modes
+  `filter` / `all` / `tags` / `duplicates` / `browser-loading` / `logo`,
+  cropped, so they stay true to the code).
 - `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
   `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: auwrapper hidden
   params + program count (SDK bug: read from parameter 0) + AudioUnitSDK
