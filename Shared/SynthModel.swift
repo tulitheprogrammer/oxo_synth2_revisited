@@ -210,40 +210,6 @@ enum FileAction: Equatable {
     case exportTags, importTags
 }
 
-/// What one Import… answered (EngineCore/PatchLibrary.hpp `ImportResult`,
-/// via the hook's newline payload): the folders created with their patch
-/// counts, a total, and why anything was left out.
-public struct ImportOutcome: Equatable {
-    public struct Added: Equatable {
-        public let path: String
-        public let patches: Int
-    }
-    public var added: [Added] = []
-    public var patches = 0
-    public var refused: [String] = []
-    public var isEmpty: Bool { added.isEmpty }
-
-    /// Decodes `patches=N` / `+<n> <folder>` / `!<path>: <reason>` lines.
-    /// A bare list of folders (an older host) still reads as "added".
-    public init(payload: String) {
-        for line in payload.split(separator: "\n", omittingEmptySubsequences: true) {
-            if line.hasPrefix("patches=") {
-                patches = Int(line.dropFirst(8)) ?? 0
-            } else if line.hasPrefix("+") {
-                let rest = line.dropFirst()
-                let count = Int(rest.prefix { $0.isNumber }) ?? 0
-                let path = rest.drop { $0.isNumber || $0 == " " }
-                if !path.isEmpty { added.append(Added(path: String(path), patches: count)) }
-            } else if line.hasPrefix("!") {
-                refused.append(String(line.dropFirst()))
-            } else if !line.isEmpty {
-                added.append(Added(path: String(line), patches: 0))
-            }
-        }
-        if patches == 0 { patches = added.reduce(0) { $0 + $1.patches } }
-    }
-}
-
 /// One set of patches whose file BYTES are identical
 /// (`PatchManager::FindDuplicates`): only where each member sits, since
 /// names and colours come from the bank list, so a group stays valid
